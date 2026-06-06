@@ -82,15 +82,6 @@ export interface Step {
   remark?: string;
 }
 
-export interface StorageData {
-  models: Model[];
-  steps: Step[];
-  reminderLogs: ReminderLog[];
-  qualityInspections: QualityInspection[];
-  reworkRecords: ReworkRecord[];
-  updatedAt: string;
-}
-
 export const REWORK_STATUS_LABEL: Record<ReworkStatus, string> = {
   IN_PROGRESS: '返工中',
   COMPLETED: '返工完成'
@@ -173,3 +164,69 @@ export const REMINDER_DAYS_OPTIONS: { value: ReminderDays; label: string }[] = [
 ];
 
 export const DEFAULT_REMINDER_DAYS: ReminderDays = 3;
+
+export type BatchActionType =
+  | 'SET_RESPONSIBLE_PERSON'
+  | 'SET_EXPECTED_DELIVERY_DATE'
+  | 'SET_REMINDER_DAYS'
+  | 'MARK_REMINDED'
+  | 'SET_FLOW_STATUS'
+  | 'EXPORT_SUMMARY';
+
+export const BATCH_ACTION_TYPE_LABEL: Record<BatchActionType, string> = {
+  SET_RESPONSIBLE_PERSON: '批量设置负责人',
+  SET_EXPECTED_DELIVERY_DATE: '批量调整预计交付日期',
+  SET_REMINDER_DAYS: '批量修改提醒天数',
+  MARK_REMINDED: '批量标记已提醒',
+  SET_FLOW_STATUS: '批量变更流转状态',
+  EXPORT_SUMMARY: '批量导出模型摘要'
+};
+
+export const BATCH_ACTION_TYPE_ICON: Record<BatchActionType, string> = {
+  SET_RESPONSIBLE_PERSON: '👤',
+  SET_EXPECTED_DELIVERY_DATE: '📅',
+  SET_REMINDER_DAYS: '⏰',
+  MARK_REMINDED: '✅',
+  SET_FLOW_STATUS: '🔄',
+  EXPORT_SUMMARY: '📤'
+};
+
+export interface BatchOperationDetail {
+  field?: string;
+  previousValue?: string | number | boolean | null;
+  newValue?: string | number | boolean | null;
+  note?: string;
+}
+
+export interface BatchOperationRecord {
+  id: string;
+  modelId: string;
+  batchOperationId: string;
+  actionType: BatchActionType;
+  detail: BatchOperationDetail;
+  createdAt: string;
+}
+
+export interface BatchOperation {
+  id: string;
+  actionType: BatchActionType;
+  modelIds: string[];
+  succeededIds: string[];
+  failedIds: string[];
+  failureReasons: Record<string, string>;
+  payload: Record<string, any>;
+  operator: string;
+  remark?: string;
+  createdAt: string;
+}
+
+export interface StorageData {
+  models: Model[];
+  steps: Step[];
+  reminderLogs: ReminderLog[];
+  qualityInspections: QualityInspection[];
+  reworkRecords: ReworkRecord[];
+  batchOperations: BatchOperation[];
+  batchOperationRecords: BatchOperationRecord[];
+  updatedAt: string;
+}

@@ -1,8 +1,26 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Model, Step, StorageData, FlowStatus, DentureType, ReminderLog, ReminderDays, DeliveryDateHistory, QualityInspection, QualityStatus, InspectionResult, ReworkRecord, ReworkStatus } from './types';
-import { DEFAULT_REMINDER_DAYS } from './types';
+import type {
+  Model,
+  Step,
+  StorageData,
+  FlowStatus,
+  DentureType,
+  ReminderLog,
+  ReminderDays,
+  DeliveryDateHistory,
+  QualityInspection,
+  QualityStatus,
+  InspectionResult,
+  ReworkRecord,
+  ReworkStatus,
+  BatchOperation,
+  BatchOperationRecord,
+  BatchActionType
+} from './types';
+import { DEFAULT_REMINDER_DAYS, FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, QUALITY_STATUS_LABEL, BATCH_ACTION_TYPE_LABEL } from './types';
 import { loadFromStorage, saveToStorage } from './storage';
-import { generateId, todayStr, daysRemaining, getDeliveryStatus } from './formatters';
+import { generateId, todayStr, daysRemaining, getDeliveryStatus, formatDate } from './formatters';
+import { validateBatchAction, canTransitionTo, canMarkDelivered } from './validators';
 
 const emptyData: StorageData = {
   models: [],
@@ -10,6 +28,8 @@ const emptyData: StorageData = {
   reminderLogs: [],
   qualityInspections: [],
   reworkRecords: [],
+  batchOperations: [],
+  batchOperationRecords: [],
   updatedAt: ''
 };
 
@@ -21,6 +41,8 @@ export const steps = writable<Step[]>(initial.steps);
 export const reminderLogs = writable<ReminderLog[]>(initial.reminderLogs);
 export const qualityInspections = writable<QualityInspection[]>(initial.qualityInspections);
 export const reworkRecords = writable<ReworkRecord[]>(initial.reworkRecords);
+export const batchOperations = writable<BatchOperation[]>(initial.batchOperations);
+export const batchOperationRecords = writable<BatchOperationRecord[]>(initial.batchOperationRecords);
 
 function persist() {
   saveToStorage({
@@ -29,6 +51,8 @@ function persist() {
     reminderLogs: get(reminderLogs),
     qualityInspections: get(qualityInspections),
     reworkRecords: get(reworkRecords),
+    batchOperations: get(batchOperations),
+    batchOperationRecords: get(batchOperationRecords),
     updatedAt: new Date().toISOString()
   });
 }
@@ -39,6 +63,8 @@ if (typeof window !== 'undefined') {
   reminderLogs.subscribe(() => persist());
   qualityInspections.subscribe(() => persist());
   reworkRecords.subscribe(() => persist());
+  batchOperations.subscribe(() => persist());
+  batchOperationRecords.subscribe(() => persist());
 }
 
 export function addModel(data: Omit<Model, 'id' | 'createdAt' | 'updatedAt' | 'reminded' | 'deliveryDateHistory'> & { reminded?: boolean; deliveryDateHistory?: DeliveryDateHistory[] }): Model {
@@ -458,4 +484,313 @@ export function getActiveRework(modelId: string): ReworkRecord | undefined {
 export const activeReworkCount = derived(
   [reworkRecords],
   ([$reworkRecords]) => $reworkRecords.filter((r) => r.status === 'IN_PROGRESS').length
+);
+
+export function getBatchOperationRecordsByModelId(modelId: string): BatchOperationRecord[] {
+  return get(batchOperationRecords)
+    .filter((r) => r.modelId === modelId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+export function getBatchOperationById(id: string): BatchOperation | undefined {
+  return get(batchOperations).find((op) => op.id === id);
+}
+
+export interface BatchExecuteResult {
+  batchOperationId: string;
+  succeeded: number;
+  failed: number;
+  failureReasons: Record<string, string>;
+  succeededIds: string[];
+  failedIds: string[];
+}
+
+export function executeBatchOperation(
+  modelIds: string[],
+  actionType: BatchActionType,
+  payload: Record<string, any>,
+  operator: string = '系统',
+  remark?: string
+): BatchExecuteResult {
+  const now = new Date().toISOString();
+  const batchOpId = generateId();
+  const succeededIds: string[] = [];
+  const failedIds: string[] = [];
+  const failureReasons: Record<string, string> = {};
+  const recordsToAdd: BatchOperationRecord[] = [];
+
+  const allModels = get(models);
+  const allSteps = get(steps);
+  const allInspections = get(qualityInspections);
+
+  for (const modelId of modelIds) {
+    const model = allModels.find((m) => m.id === modelId);
+    if (!model) {
+      failedIds.push(modelId);
+      failureReasons[modelId] = '模型不存在';
+      continue;
+    }
+
+    const modelSteps = allSteps.filter((s) => s.modelId === modelId);
+    const modelInspections = allInspections.filter((q) => q.modelId === modelId);
+
+    const check = validateBatchAction(actionType, payload, {
+      model,
+      steps: modelSteps,
+      inspections: modelInspections
+    });
+
+    if (!check.valid) {
+      failedIds.push(modelId);
+      failureReasons[modelId] = check.message || '校验失败';
+      continue;
+    }
+
+    try {
+      const previousValues: Record<string, any> = {};
+
+      switch (actionType) {
+        case 'SET_RESPONSIBLE_PERSON': {
+          previousValues.responsiblePerson = model.responsiblePerson;
+          updateModel(modelId, { responsiblePerson: payload.responsiblePerson.trim() });
+          break;
+        }
+
+        case 'SET_EXPECTED_DELIVERY_DATE': {
+          previousValues.expectedDeliveryDate = model.expectedDeliveryDate;
+          const historyEntry: DeliveryDateHistory = {
+            id: generateId(),
+            previousDate: model.expectedDeliveryDate,
+            newDate: payload.expectedDeliveryDate,
+            reason: payload.reason || '批量调整交付日期',
+            changedAt: now,
+            changedBy: operator
+          };
+          updateModel(modelId, {
+            expectedDeliveryDate: payload.expectedDeliveryDate,
+            delayReason: payload.reason || model.delayReason,
+            reminded: false,
+            remindedAt: undefined,
+            deliveryDateHistory: [...(model.deliveryDateHistory || []), historyEntry]
+          });
+          break;
+        }
+
+        case 'SET_REMINDER_DAYS': {
+          previousValues.reminderDays = model.reminderDays ?? DEFAULT_REMINDER_DAYS;
+          updateModel(modelId, { reminderDays: payload.reminderDays });
+          break;
+        }
+
+        case 'MARK_REMINDED': {
+          previousValues.reminded = model.reminded;
+          previousValues.remindedAt = model.remindedAt;
+          markAsReminded(modelId);
+          break;
+        }
+
+        case 'SET_FLOW_STATUS': {
+          previousValues.status = model.status;
+          const targetStatus = payload.status as FlowStatus;
+          const transCheck = canTransitionTo(model.status, targetStatus, modelSteps, modelInspections);
+          if (!transCheck.valid) {
+            failedIds.push(modelId);
+            failureReasons[modelId] = transCheck.message || '状态流转不合法';
+            continue;
+          }
+          updateModelStatus(modelId, targetStatus);
+          break;
+        }
+
+        case 'EXPORT_SUMMARY': {
+          break;
+        }
+      }
+
+      const record: BatchOperationRecord = {
+        id: generateId(),
+        modelId,
+        batchOperationId: batchOpId,
+        actionType,
+        detail: {
+          field: getActionFieldName(actionType),
+          previousValue: previousValues[Object.keys(previousValues)[0]] ?? null,
+          newValue: getActionNewValue(actionType, payload)
+        },
+        createdAt: now
+      };
+      recordsToAdd.push(record);
+      succeededIds.push(modelId);
+    } catch (e) {
+      failedIds.push(modelId);
+      failureReasons[modelId] = e instanceof Error ? e.message : '执行失败';
+    }
+  }
+
+  if (recordsToAdd.length > 0) {
+    batchOperationRecords.update((list) => [...list, ...recordsToAdd]);
+  }
+
+  const batchOp: BatchOperation = {
+    id: batchOpId,
+    actionType,
+    modelIds,
+    succeededIds,
+    failedIds,
+    failureReasons,
+    payload,
+    operator,
+    remark,
+    createdAt: now
+  };
+  batchOperations.update((list) => [...list, batchOp]);
+
+  return {
+    batchOperationId: batchOpId,
+    succeeded: succeededIds.length,
+    failed: failedIds.length,
+    failureReasons,
+    succeededIds,
+    failedIds
+  };
+}
+
+function getActionFieldName(actionType: BatchActionType): string {
+  switch (actionType) {
+    case 'SET_RESPONSIBLE_PERSON': return '负责人';
+    case 'SET_EXPECTED_DELIVERY_DATE': return '预计交付日期';
+    case 'SET_REMINDER_DAYS': return '提醒天数';
+    case 'MARK_REMINDED': return '提醒状态';
+    case 'SET_FLOW_STATUS': return '流转状态';
+    case 'EXPORT_SUMMARY': return '导出摘要';
+    default: return '';
+  }
+}
+
+function getActionNewValue(actionType: BatchActionType, payload: Record<string, any>): string | number | boolean | null {
+  switch (actionType) {
+    case 'SET_RESPONSIBLE_PERSON': return payload.responsiblePerson ?? null;
+    case 'SET_EXPECTED_DELIVERY_DATE': return payload.expectedDeliveryDate ?? null;
+    case 'SET_REMINDER_DAYS': return payload.reminderDays ?? null;
+    case 'MARK_REMINDED': return true;
+    case 'SET_FLOW_STATUS': return payload.status ?? null;
+    case 'EXPORT_SUMMARY': return null;
+    default: return null;
+  }
+}
+
+export function exportModelsSummary(modelIds: string[]): string {
+  const allModels = get(models);
+  const allSteps = get(steps);
+  const allInspections = get(qualityInspections);
+
+  const lines: string[] = [];
+  lines.push('牙科义齿模型批量摘要');
+  lines.push(`导出时间: ${new Date().toLocaleString('zh-CN')}`);
+  lines.push(`导出模型数: ${modelIds.length}`);
+  lines.push('');
+  lines.push('='.repeat(80));
+  lines.push('');
+
+  for (const modelId of modelIds) {
+    const model = allModels.find((m) => m.id === modelId);
+    if (!model) continue;
+
+    const modelSteps = allSteps.filter((s) => s.modelId === modelId);
+    const completedSteps = modelSteps.filter((s) => s.completed).length;
+    const modelInspections = allInspections.filter((q) => q.modelId === modelId);
+    const latestInspection = modelInspections.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+    const qs = getQualityStatus(model);
+
+    lines.push(`【模型编号】${model.modelNo}`);
+    lines.push(`  患者姓名: ${model.patientName}`);
+    lines.push(`  义齿类型: ${DENTURE_TYPE_LABEL[model.dentureType]}`);
+    lines.push(`  流转状态: ${FLOW_STATUS_LABEL[model.status]}`);
+    lines.push(`  质检状态: ${QUALITY_STATUS_LABEL[qs] || '-'}`);
+    lines.push(`  负责人: ${model.responsiblePerson}`);
+    lines.push(`  取模日期: ${formatDate(model.impressionDate)}`);
+    lines.push(`  预计交付: ${formatDate(model.expectedDeliveryDate)}`);
+    lines.push(`  制作进度: ${completedSteps}/${modelSteps.length} 步骤`);
+    if (latestInspection) {
+      lines.push(`  最近质检: ${latestInspection.result === 'PASS' ? '通过' : '不通过'} (${formatDate(latestInspection.inspectionDate)} · ${latestInspection.inspector})`);
+    }
+    if (model.delayReason) {
+      lines.push(`  延期原因: ${model.delayReason}`);
+    }
+    lines.push('');
+    lines.push('-'.repeat(80));
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+export function downloadSummary(text: string, filename?: string): void {
+  if (typeof window === 'undefined') return;
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || `模型摘要_${todayStr()}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export const thisWeekBatchOperationCount = derived(
+  [batchOperations],
+  ([$batchOperations]) => {
+    const now = new Date();
+    const dayOfWeek = now.getDay() || 7;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - (dayOfWeek - 1));
+    monday.setHours(0, 0, 0, 0);
+    return $batchOperations.filter((op) => new Date(op.createdAt) >= monday).length;
+  }
+);
+
+export const thisWeekBatchModifiedModelCount = derived(
+  [batchOperations],
+  ([$batchOperations]) => {
+    const now = new Date();
+    const dayOfWeek = now.getDay() || 7;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - (dayOfWeek - 1));
+    monday.setHours(0, 0, 0, 0);
+    const modelSet = new Set<string>();
+    for (const op of $batchOperations) {
+      if (new Date(op.createdAt) >= monday && op.actionType !== 'EXPORT_SUMMARY') {
+        for (const id of op.succeededIds) modelSet.add(id);
+      }
+    }
+    return modelSet.size;
+  }
+);
+
+export const mostUsedBatchActionType = derived(
+  [batchOperations],
+  ([$batchOperations]): { type: BatchActionType | null; label: string; count: number } => {
+    if ($batchOperations.length === 0) {
+      return { type: null, label: '-', count: 0 };
+    }
+    const counter: Record<string, number> = {};
+    for (const op of $batchOperations) {
+      counter[op.actionType] = (counter[op.actionType] || 0) + 1;
+    }
+    let maxType = '';
+    let maxCount = 0;
+    for (const [t, c] of Object.entries(counter)) {
+      if (c > maxCount) {
+        maxCount = c;
+        maxType = t;
+      }
+    }
+    const type = maxType as BatchActionType;
+    return {
+      type,
+      label: BATCH_ACTION_TYPE_LABEL[type] || '-',
+      count: maxCount
+    };
+  }
 );

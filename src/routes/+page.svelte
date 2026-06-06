@@ -5,7 +5,7 @@
   import AppHeader from '$components/AppHeader.svelte';
   import StatCard from '$components/StatCard.svelte';
   import StatusBadge from '$components/StatusBadge.svelte';
-  import { models, modelsByStatus, overdueModels, upcomingModels, delayReasonStats, totalRescheduleCount, upcomingAndOverdueModels, pendingQualityInspectionCount, qualityInspectionPassRate, totalReworkCount, activeReworkCount } from '$lib/store';
+  import { models, modelsByStatus, overdueModels, upcomingModels, delayReasonStats, totalRescheduleCount, upcomingAndOverdueModels, pendingQualityInspectionCount, qualityInspectionPassRate, totalReworkCount, activeReworkCount, thisWeekBatchOperationCount, thisWeekBatchModifiedModelCount, mostUsedBatchActionType } from '$lib/store';
   import type { Model } from '$lib/types';
   import { DENTURE_TYPE_LABEL, DEFAULT_REMINDER_DAYS } from '$lib/types';
   import { formatDate, daysRemaining, getLastNDates, getDeliveryStatus } from '$lib/formatters';
@@ -213,6 +213,30 @@
     <StatCard title="质检通过率" value={$qualityInspectionPassRate.total > 0 ? ($qualityInspectionPassRate.rate + '%') : '-'} icon="✅" gradient="from-teal-500 to-teal-600" subtitle={passRateSubtitle} />
     <StatCard title="返工中" value={$activeReworkCount} icon="🛠️" gradient="from-amber-500 to-amber-600" subtitle="正在整改中" />
     <StatCard title="返工次数" value={$totalReworkCount} icon="🔄" gradient="from-red-500 to-red-600" subtitle="累计质检不通过次数" />
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    <StatCard
+      title="本周批量操作次数"
+      value={$thisWeekBatchOperationCount}
+      icon="📦"
+      gradient="from-indigo-500 to-indigo-600"
+      subtitle="本周内执行的批量操作"
+    />
+    <StatCard
+      title="批量修改模型数"
+      value={$thisWeekBatchModifiedModelCount}
+      icon="📋"
+      gradient="from-violet-500 to-violet-600"
+      subtitle="本周内批量修改的模型数量"
+    />
+    <StatCard
+      title="最常用批量操作类型"
+      value={$mostUsedBatchActionType.count > 0 ? $mostUsedBatchActionType.label : '-'}
+      icon="⭐"
+      gradient="from-fuchsia-500 to-fuchsia-600"
+      subtitle={$mostUsedBatchActionType.count > 0 ? `累计使用 ${$mostUsedBatchActionType.count} 次` : '暂无批量操作数据'}
+    />
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">

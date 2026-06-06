@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { createEventDispatcher } from 'svelte';
   import StatusBadge from './StatusBadge.svelte';
   import QualityStatusBadge from './QualityStatusBadge.svelte';
   import type { Model, Step, QualityStatus } from '$lib/types';
@@ -9,6 +10,12 @@
 
   export let model: Model;
   export let steps: Step[] = [];
+  export let selectable: boolean = false;
+  export let selected: boolean = false;
+
+  const dispatch = createEventDispatcher<{
+    toggleSelect: { modelId: string; selected: boolean };
+  }>();
 
   let qualityStatus: QualityStatus = 'NONE';
   let showQualityAlert = false;
@@ -31,13 +38,33 @@
   }
 
   function handleEdit() {
+    if (!selectable) {
+      goto(`/models/${model.id}`);
+    }
+  }
+
+  function handleCardClick() {
+    if (selectable) {
+      dispatch('toggleSelect', { modelId: model.id, selected: !selected });
+    }
+  }
+
+  function handleCheckboxClick(e: Event) {
+    e.stopPropagation();
+    dispatch('toggleSelect', { modelId: model.id, selected: !selected });
+  }
+
+  function handleEditClick(e: Event) {
+    e.stopPropagation();
     goto(`/models/${model.id}`);
   }
 </script>
 
 <div
   class="bg-white rounded-2xl shadow-sm border card-hover overflow-hidden {
-    qualityStatus === 'FAILED'
+    selectable && selected
+      ? 'border-medical-blue-500 ring-2 ring-medical-blue-200'
+      : qualityStatus === 'FAILED'
       ? 'border-red-400 ring-2 ring-red-100'
       : qualityStatus === 'PENDING'
       ? 'border-orange-400 ring-2 ring-orange-100'
@@ -46,7 +73,8 @@
       : upcoming
       ? 'border-amber-300 ring-2 ring-amber-100'
       : 'border-slate-100'
-  }"
+  } {selectable ? 'cursor-pointer' : ''}"
+  on:click={handleCardClick}
 >
   {#if qualityStatus === 'FAILED'}
     <div class="bg-red-500 text-white text-xs font-medium px-4 py-1.5 flex items-center gap-1.5">
@@ -78,18 +106,31 @@
 
   <div class="p-5">
     <div class="flex items-start justify-between mb-3">
-      <div>
-        <div class="flex items-center gap-2 mb-1 flex-wrap">
-          <span class="text-sm font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-            {model.modelNo}
-          </span>
-          <StatusBadge status={model.status} />
-          <QualityStatusBadge status={qualityStatus} />
+      <div class="flex items-start gap-2">
+        {#if selectable}
+          <label class="mt-0.5 flex-shrink-0 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selected}
+              on:click={handleCheckboxClick}
+              on:change={(e) => {}}
+              class="w-5 h-5 rounded border-2 border-slate-300 text-medical-blue-600 focus:ring-medical-blue-500 focus:ring-offset-0 cursor-pointer"
+            />
+          </label>
+        {/if}
+        <div>
+          <div class="flex items-center gap-2 mb-1 flex-wrap">
+            <span class="text-sm font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+              {model.modelNo}
+            </span>
+            <StatusBadge status={model.status} />
+            <QualityStatusBadge status={qualityStatus} />
+          </div>
+          <h3 class="text-lg font-bold text-slate-800">{model.patientName}</h3>
         </div>
-        <h3 class="text-lg font-bold text-slate-800">{model.patientName}</h3>
       </div>
       <button
-        on:click={handleEdit}
+        on:click={handleEditClick}
         class="text-slate-400 hover:text-medical-blue-600 transition-colors p-1.5 hover:bg-slate-100 rounded-lg"
         aria-label="编辑"
       >

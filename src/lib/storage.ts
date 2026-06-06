@@ -26,6 +26,8 @@ export function loadFromStorage(): StorageData | null {
       reminderLogs: parsed.reminderLogs || [],
       qualityInspections: parsed.qualityInspections || [],
       reworkRecords: parsed.reworkRecords || [],
+      batchOperations: parsed.batchOperations || [],
+      batchOperationRecords: parsed.batchOperationRecords || [],
       updatedAt: parsed.updatedAt || new Date().toISOString()
     };
   } catch (e) {

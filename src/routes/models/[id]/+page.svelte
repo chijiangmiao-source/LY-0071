@@ -28,15 +28,18 @@
     startRework,
     completeRework,
     getActiveRework,
-    getReworkRecordsByModelId
+    getReworkRecordsByModelId,
+    getBatchOperationRecordsByModelId,
+    getBatchOperationById,
+    batchOperationRecords
   } from '$lib/store';
   import {
     validateModel,
     canTransitionTo,
     canMarkDelivered
   } from '$lib/validators';
-  import type { FlowStatus, DentureType, Model, Step, ReminderDays, DeliveryDateHistory, QualityInspection, QualityStatus, InspectionResult, ReworkRecord, ReworkStatus } from '$lib/types';
-  import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES, REMINDER_DAYS_OPTIONS, DEFAULT_REMINDER_DAYS, INSPECTION_RESULT_LABEL, REWORK_STATUS_LABEL, REWORK_STATUS_COLOR } from '$lib/types';
+  import type { FlowStatus, DentureType, Model, Step, ReminderDays, DeliveryDateHistory, QualityInspection, QualityStatus, InspectionResult, ReworkRecord, ReworkStatus, BatchOperationRecord, BatchOperation } from '$lib/types';
+  import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES, REMINDER_DAYS_OPTIONS, DEFAULT_REMINDER_DAYS, INSPECTION_RESULT_LABEL, REWORK_STATUS_LABEL, REWORK_STATUS_COLOR, BATCH_ACTION_TYPE_LABEL, BATCH_ACTION_TYPE_ICON } from '$lib/types';
   import { todayStr, formatDate, isOverdue, daysRemaining, getDeliveryStatus } from '$lib/formatters';
   import { get } from 'svelte/store';
 
@@ -94,7 +97,12 @@
       .filter((r) => r.modelId === modelId)
       .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
     activeRework = localReworkRecords.find((r) => r.status === 'IN_PROGRESS') || null;
+    localBatchRecords = $batchOperationRecords
+      .filter((r) => r.modelId === modelId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
+
+  let localBatchRecords: BatchOperationRecord[] = [];
 
   const dentureTypeOptions = Object.entries(DENTURE_TYPE_LABEL) as [DentureType, string][];
 
@@ -308,6 +316,16 @@
   $: deliveryStatus = loaded ? getDeliveryStatus(expectedDeliveryDate, status, reminderDays) : 'NORMAL';
   $: isUpcoming = deliveryStatus === 'UPCOMING';
   $: isOverdueStatus = deliveryStatus === 'OVERDUE';
+
+  function formatBatchValue(v: any): string {
+    if (v === true) return '是';
+    if (v === false) return '否';
+    if (v === null || v === undefined) return '-';
+    if (typeof v === 'string' && FLOW_STATUS_LABEL[v as keyof typeof FLOW_STATUS_LABEL]) {
+      return FLOW_STATUS_LABEL[v as keyof typeof FLOW_STATUS_LABEL];
+    }
+    return String(v);
+  }
 </script>
 
 <AppHeader />
@@ -881,6 +899,56 @@
           </div>
         {/if}
       </div>
+
+      {#if localBatchRecords.length > 0}
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <span>📦</span> 批量操作历史
+            </h3>
+            <span class="text-xs bg-medical-blue-100 text-medical-blue-700 px-2.5 py-1 rounded-full border border-medical-blue-200">
+              共 {localBatchRecords.length} 次
+            </span>
+          </div>
+          <div class="space-y-3">
+            {#each localBatchRecords as record (record.id)}
+              <div class="border border-slate-200 rounded-xl p-4 bg-slate-50/50">
+                <div class="flex items-start justify-between gap-3 flex-wrap">
+                  <div class="flex items-center gap-3 flex-wrap">
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-medical-blue-100 text-medical-blue-700 border-medical-blue-200">
+                      <span>{BATCH_ACTION_TYPE_ICON[record.actionType]}</span>
+                      {BATCH_ACTION_TYPE_LABEL[record.actionType]}
+                    </span>
+                    {#if record.detail.field}
+                      <span class="text-sm text-slate-600">
+                        字段：<span class="font-medium text-slate-800">{record.detail.field}</span>
+                      </span>
+                    {/if}
+                  </div>
+                  <span class="text-xs text-slate-400">
+                    {formatDate(record.createdAt)}
+                  </span>
+                </div>
+                {#if record.detail.previousValue !== undefined && record.detail.previousValue !== null}
+                  <div class="mt-3 pt-3 border-t border-slate-200 space-y-1 text-sm">
+                    <p class="text-slate-500">
+                      原值：
+                      <span class="text-slate-700 line-through bg-slate-200 px-1.5 py-0.5 rounded">
+                        {formatBatchValue(record.detail.previousValue)}
+                      </span>
+                      <span class="mx-2 text-slate-400">→</span>
+                      新值：
+                      <span class="text-medical-blue-700 font-medium bg-medical-blue-50 px-1.5 py-0.5 rounded">
+                        {formatBatchValue(record.detail.newValue)}
+                      </span>
+                    </p>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
 
       <div class="flex items-center justify-end gap-3">
         <a href="/models" class="btn-secondary">取消</a>

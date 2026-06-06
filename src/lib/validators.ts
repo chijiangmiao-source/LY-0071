@@ -1,4 +1,4 @@
-import type { Model, Step, ValidationResult, FlowStatus, QualityInspection } from './types';
+import type { Model, Step, ValidationResult, FlowStatus, QualityInspection, BatchActionType } from './types';
 import { isDateNotAfterToday, isDateBeforeOrEqual } from './formatters';
 
 const VALID_NAME_PATTERN = /^[\u4e00-\u9fa5a-zA-Z0-9·\s]+$/;
@@ -162,4 +162,78 @@ export function validateQualityInspection(data: Partial<QualityInspection>): Val
     }
   }
   return { valid: Object.keys(errors).length === 0, errors };
+}
+
+export interface BatchValidationContext {
+  model: Model;
+  steps: Step[];
+  inspections: QualityInspection[];
+}
+
+export function validateBatchAction(
+  actionType: BatchActionType,
+  payload: Record<string, any>,
+  ctx: BatchValidationContext
+): { valid: boolean; message?: string } {
+  const { model, steps, inspections } = ctx;
+
+  switch (actionType) {
+    case 'SET_RESPONSIBLE_PERSON': {
+      const person = payload.responsiblePerson as string;
+      if (!person || !person.trim()) {
+        return { valid: false, message: '负责人不能为空' };
+      }
+      if (!isValidName(person)) {
+        return { valid: false, message: '负责人只能包含中文、英文、数字和空格' };
+      }
+      return { valid: true };
+    }
+
+    case 'SET_EXPECTED_DELIVERY_DATE': {
+      const newDate = payload.expectedDeliveryDate as string;
+      if (!newDate) {
+        return { valid: false, message: '请选择预计交付日期' };
+      }
+      if (!isDateBeforeOrEqual(model.impressionDate, newDate)) {
+        return { valid: false, message: '预计交付日期不能早于取模日期' };
+      }
+      if (model.status === 'DELIVERED') {
+        return { valid: false, message: '已交付的模型不能修改预计交付日期' };
+      }
+      return { valid: true };
+    }
+
+    case 'SET_REMINDER_DAYS': {
+      const days = payload.reminderDays as number;
+      if (days !== 1 && days !== 3 && days !== 7) {
+        return { valid: false, message: '提醒天数只能是 1、3 或 7 天' };
+      }
+      return { valid: true };
+    }
+
+    case 'MARK_REMINDED': {
+      if (model.status === 'DELIVERED' || model.status === 'CANCELLED') {
+        return { valid: false, message: '已交付或已取消的模型无需标记提醒' };
+      }
+      if (model.reminded) {
+        return { valid: false, message: '该模型已标记为已提醒' };
+      }
+      return { valid: true };
+    }
+
+    case 'SET_FLOW_STATUS': {
+      const target = payload.status as FlowStatus;
+      if (!target) {
+        return { valid: false, message: '请选择目标流转状态' };
+      }
+      return canTransitionTo(model.status, target, steps, inspections);
+    }
+
+    case 'EXPORT_SUMMARY': {
+      return { valid: true };
+    }
+
+    default:
+      return { valid: false, message: '未知的批量操作类型' };
+  }
 }
