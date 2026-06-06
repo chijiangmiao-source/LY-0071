@@ -5,6 +5,8 @@
   import AppHeader from '$components/AppHeader.svelte';
   import StatusBadge from '$components/StatusBadge.svelte';
   import StepForm from '$components/StepForm.svelte';
+  import QualityStatusBadge from '$components/QualityStatusBadge.svelte';
+  import QualityInspectionForm from '$components/QualityInspectionForm.svelte';
   import {
     models,
     steps,
@@ -17,15 +19,19 @@
     getModelById,
     getStepsByModelId,
     markAsReminded,
-    rescheduleDeliveryDate
+    rescheduleDeliveryDate,
+    qualityInspections,
+    addQualityInspection,
+    getQualityInspectionsByModelId,
+    getQualityStatus
   } from '$lib/store';
   import {
     validateModel,
     canTransitionTo,
     canMarkDelivered
   } from '$lib/validators';
-  import type { FlowStatus, DentureType, Model, Step, ReminderDays, DeliveryDateHistory } from '$lib/types';
-  import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES, REMINDER_DAYS_OPTIONS, DEFAULT_REMINDER_DAYS } from '$lib/types';
+  import type { FlowStatus, DentureType, Model, Step, ReminderDays, DeliveryDateHistory, QualityInspection, QualityStatus, InspectionResult } from '$lib/types';
+  import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES, REMINDER_DAYS_OPTIONS, DEFAULT_REMINDER_DAYS, INSPECTION_RESULT_LABEL } from '$lib/types';
   import { todayStr, formatDate, isOverdue, daysRemaining, getDeliveryStatus } from '$lib/formatters';
   import { get } from 'svelte/store';
 
@@ -55,9 +61,21 @@
   let rescheduleNewDate = '';
   let rescheduleReason = '';
   let rescheduleErrors: Record<string, string> = {};
+  let localInspections: QualityInspection[] = [];
+  let latestInspection: QualityInspection | null = null;
+  let qualityStatus: QualityStatus = 'NONE';
+  let reworkCount = 0;
 
   $: modelId = $page.params.id ?? '';
   $: localSteps = $steps.filter((s) => s.modelId === modelId);
+  $: {
+    localInspections = $qualityInspections
+      .filter((q) => q.modelId === modelId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    latestInspection = localInspections.length > 0 ? localInspections[0] : null;
+    qualityStatus = model ? getQualityStatus(model) : 'NONE';
+    reworkCount = localInspections.filter((q) => q.result === 'FAIL').length;
+  }
 
   const dentureTypeOptions = Object.entries(DENTURE_TYPE_LABEL) as [DentureType, string][];
 
@@ -119,7 +137,7 @@
     const target = e.target as HTMLSelectElement;
     const newStatus = target.value as FlowStatus;
 
-    const check = canTransitionTo(status, newStatus, localSteps);
+    const check = canTransitionTo(status, newStatus, localSteps, localInspections);
     if (!check.valid) {
       showDeliverWarning = true;
       deliverWarningMessage = check.message || '';
@@ -128,6 +146,11 @@
     }
     status = newStatus;
     showDeliverWarning = false;
+  }
+
+  function handleAddQualityInspection(e: CustomEvent) {
+    const data = e.detail as Omit<QualityInspection, 'id' | 'createdAt'>;
+    addQualityInspection(data);
   }
 
   async function handleSubmit() {
@@ -145,7 +168,7 @@
       delayReason: delayReason.trim() || undefined,
       deliveryDateHistory
     };
-    const result = validateModel(data, get(models), localSteps, modelId);
+    const result = validateModel(data, get(models), localSteps, modelId, localInspections);
     if (!result.valid) {
       errors = result.errors;
       return;
@@ -239,6 +262,7 @@
             </span>
           </h2>
           <StatusBadge status={status} size="md" />
+          <QualityStatusBadge status={qualityStatus} size="md" />
           {#if isOverdueStatus}
             <span class="inline-flex items-center gap-1 px-3 py-1 bg-warning-red-500 text-white text-sm font-medium rounded-full">
               ⚠️
@@ -580,6 +604,123 @@
           {/if}
         </div>
       </StepForm>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <span>🔍</span> 质检验收
+          </h3>
+          {#if reworkCount > 0}
+            <span class="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full border border-red-200">
+              累计返工 {reworkCount} 次
+            </span>
+          {/if}
+        </div>
+
+        {#if qualityStatus === 'FAILED' && latestInspection}
+          <div class="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl">
+            <div class="flex items-start gap-3">
+              <div class="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center text-lg flex-shrink-0">
+                ⚠️
+              </div>
+              <div class="flex-1">
+                <p class="font-semibold text-red-800 mb-1">需返工处理</p>
+                <p class="text-sm text-red-700 mb-2">
+                  最新质检结果为「不通过」，请根据以下问题描述和返工要求完成整改后，重新提交质检。
+                </p>
+                {#if latestInspection.problemDescription}
+                  <p class="text-sm text-slate-700 mt-2">
+                    <span class="font-medium">问题描述：</span>{latestInspection.problemDescription}
+                  </p>
+                {/if}
+                {#if latestInspection.reworkRequirements}
+                  <p class="text-sm text-slate-700 mt-1">
+                    <span class="font-medium">返工要求：</span>{latestInspection.reworkRequirements}
+                  </p>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {:else if qualityStatus === 'PENDING'}
+          <div class="mb-4 p-4 bg-orange-50 border border-orange-200 rounded-xl">
+            <div class="flex items-start gap-3">
+              <div class="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center text-lg flex-shrink-0">
+                🔍
+              </div>
+              <div class="flex-1">
+                <p class="font-semibold text-orange-800 mb-1">待质检</p>
+                <p class="text-sm text-orange-700">
+                  制作步骤已完成，待试戴阶段或所有步骤完成后，请及时填写质检记录进行验收。
+                </p>
+              </div>
+            </div>
+          </div>
+        {:else if qualityStatus === 'PASSED_PENDING_DELIVERY'}
+          <div class="mb-4 p-4 bg-teal-50 border border-teal-200 rounded-xl">
+            <div class="flex items-start gap-3">
+              <div class="w-8 h-8 bg-teal-100 rounded-full flex items-center justify-center text-lg flex-shrink-0">
+                ✅
+              </div>
+              <div class="flex-1">
+                <p class="font-semibold text-teal-800 mb-1">质检通过，待交付</p>
+                <p class="text-sm text-teal-700">
+                  最近一次质检已通过，可将模型状态变更为「已交付」。
+                </p>
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        <QualityInspectionForm
+          modelId={modelId}
+          defaultInspector={responsiblePerson}
+          on:submit={handleAddQualityInspection}
+        />
+
+        {#if localInspections.length > 0}
+          <div class="mt-6 pt-5 border-t border-slate-100">
+            <h4 class="text-sm font-semibold text-slate-700 mb-3">📋 质检历史记录（共 {localInspections.length} 次）</h4>
+            <div class="space-y-3">
+              {#each localInspections as record (record.id)}
+                <div class="border border-slate-200 rounded-xl p-4 {record.result === 'PASS' ? 'bg-green-50/50 border-green-200' : 'bg-red-50/50 border-red-200'}">
+                  <div class="flex items-start justify-between gap-3 flex-wrap">
+                    <div class="flex items-center gap-3 flex-wrap">
+                      <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border {record.result === 'PASS' ? 'bg-green-100 text-green-700 border-green-300' : 'bg-red-100 text-red-700 border-red-300'}">
+                        <span class="w-1.5 h-1.5 rounded-full {record.result === 'PASS' ? 'bg-green-500' : 'bg-red-500'}"></span>
+                        {INSPECTION_RESULT_LABEL[record.result]}
+                      </span>
+                      <span class="text-sm text-slate-600">
+                        质检人：<span class="font-medium text-slate-800">{record.inspector}</span>
+                      </span>
+                      <span class="text-sm text-slate-600">
+                        质检日期：<span class="font-medium text-slate-800">{formatDate(record.inspectionDate)}</span>
+                      </span>
+                    </div>
+                    <span class="text-xs text-slate-400">
+                      提交于 {formatDate(record.createdAt)}
+                    </span>
+                  </div>
+                  {#if record.problemDescription}
+                    <p class="text-sm text-slate-700 mt-3">
+                      <span class="font-medium">问题描述：</span>{record.problemDescription}
+                    </p>
+                  {/if}
+                  {#if record.reworkRequirements}
+                    <p class="text-sm text-slate-700 mt-2">
+                      <span class="font-medium">返工要求：</span>{record.reworkRequirements}
+                    </p>
+                  {/if}
+                  {#if record.handlingRemarks}
+                    <p class="text-sm text-slate-700 mt-2">
+                      <span class="font-medium">处理备注：</span>{record.handlingRemarks}
+                    </p>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
 
       <div class="flex items-center justify-end gap-3">
         <a href="/models" class="btn-secondary">取消</a>

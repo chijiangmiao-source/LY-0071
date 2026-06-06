@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Model, Step, StorageData, FlowStatus, DentureType, ReminderLog, ReminderDays, DeliveryDateHistory } from './types';
+import type { Model, Step, StorageData, FlowStatus, DentureType, ReminderLog, ReminderDays, DeliveryDateHistory, QualityInspection, QualityStatus, InspectionResult } from './types';
 import { DEFAULT_REMINDER_DAYS } from './types';
 import { loadFromStorage, saveToStorage } from './storage';
 import { generateId, todayStr, daysRemaining, getDeliveryStatus } from './formatters';
@@ -8,6 +8,7 @@ const emptyData: StorageData = {
   models: [],
   steps: [],
   reminderLogs: [],
+  qualityInspections: [],
   updatedAt: ''
 };
 
@@ -17,12 +18,14 @@ const initial: StorageData = stored || emptyData;
 export const models = writable<Model[]>(initial.models);
 export const steps = writable<Step[]>(initial.steps);
 export const reminderLogs = writable<ReminderLog[]>(initial.reminderLogs);
+export const qualityInspections = writable<QualityInspection[]>(initial.qualityInspections);
 
 function persist() {
   saveToStorage({
     models: get(models),
     steps: get(steps),
     reminderLogs: get(reminderLogs),
+    qualityInspections: get(qualityInspections),
     updatedAt: new Date().toISOString()
   });
 }
@@ -31,6 +34,7 @@ if (typeof window !== 'undefined') {
   models.subscribe(() => persist());
   steps.subscribe(() => persist());
   reminderLogs.subscribe(() => persist());
+  qualityInspections.subscribe(() => persist());
 }
 
 export function addModel(data: Omit<Model, 'id' | 'createdAt' | 'updatedAt' | 'reminded' | 'deliveryDateHistory'> & { reminded?: boolean; deliveryDateHistory?: DeliveryDateHistory[] }): Model {
@@ -57,6 +61,7 @@ export function updateModel(id: string, data: Partial<Model>): void {
 export function deleteModel(id: string): void {
   models.update((list) => list.filter((m) => m.id !== id));
   steps.update((list) => list.filter((s) => s.modelId !== id));
+  qualityInspections.update((list) => list.filter((q) => q.modelId !== id));
 }
 
 export function getModelById(id: string): Model | undefined {
@@ -252,3 +257,123 @@ export function updateReminderDays(modelId: string, days: ReminderDays): void {
 export function updateDelayReason(modelId: string, reason: string): void {
   updateModel(modelId, { delayReason: reason });
 }
+
+export function addQualityInspection(
+  data: Omit<QualityInspection, 'id' | 'createdAt'>
+): QualityInspection {
+  const now = new Date().toISOString();
+  const newInspection: QualityInspection = {
+    ...data,
+    id: generateId(),
+    createdAt: now
+  };
+  qualityInspections.update((list) => [...list, newInspection]);
+  return newInspection;
+}
+
+export function getQualityInspectionsByModelId(modelId: string): QualityInspection[] {
+  return get(qualityInspections)
+    .filter((q) => q.modelId === modelId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+export function getLatestQualityInspection(modelId: string): QualityInspection | undefined {
+  const inspections = getQualityInspectionsByModelId(modelId);
+  return inspections.length > 0 ? inspections[0] : undefined;
+}
+
+export function getQualityStatus(model: Model): QualityStatus {
+  if (model.status === 'CANCELLED' || model.status === 'DELIVERED') return 'NONE';
+  const modelSteps = getStepsByModelId(model.id);
+  const stepsCompleted = modelSteps.length > 0 && modelSteps.every((s) => s.completed);
+  const needsInspection = stepsCompleted || model.status === 'TRIAL';
+  const latest = getLatestQualityInspection(model.id);
+  if (!latest) {
+    return needsInspection ? 'PENDING' : 'NONE';
+  }
+  return latest.result === 'PASS' ? 'PASSED_PENDING_DELIVERY' : 'FAILED';
+}
+
+export function hasPassedQualityInspection(modelId: string): boolean {
+  const latest = getLatestQualityInspection(modelId);
+  return latest?.result === 'PASS';
+}
+
+export const pendingQualityInspectionCount = derived(
+  [models, steps, qualityInspections],
+  ([$models, $steps, $qualityInspections]) => {
+    let count = 0;
+    for (const m of $models) {
+      if (m.status === 'DELIVERED' || m.status === 'CANCELLED') continue;
+      const modelSteps = $steps.filter((s) => s.modelId === m.id);
+      const stepsCompleted = modelSteps.length > 0 && modelSteps.every((s) => s.completed);
+      if (!stepsCompleted && m.status !== 'TRIAL') continue;
+      const latest = $qualityInspections
+        .filter((q) => q.modelId === m.id)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+      if (!latest) count++;
+    }
+    return count;
+  }
+);
+
+export const qualityInspectionPassRate = derived(
+  [models, qualityInspections],
+  ([$models, $qualityInspections]) => {
+    const inspectedModelIds = new Set<string>();
+    let passedCount = 0;
+    for (const m of $models) {
+      const inspections = $qualityInspections
+        .filter((q) => q.modelId === m.id)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      if (inspections.length > 0) {
+        inspectedModelIds.add(m.id);
+        if (inspections[0].result === 'PASS') passedCount++;
+      }
+    }
+    const total = inspectedModelIds.size;
+    if (total === 0) return { rate: 0, total: 0, passed: 0 };
+    return {
+      rate: Math.round((passedCount / total) * 100),
+      total,
+      passed: passedCount
+    };
+  }
+);
+
+export const totalReworkCount = derived(
+  [qualityInspections],
+  ([$qualityInspections]) => {
+    return $qualityInspections.filter((q) => q.result === 'FAIL').length;
+  }
+);
+
+export const qualityFailedCount = derived(
+  [models, qualityInspections],
+  ([$models, $qualityInspections]) => {
+    let count = 0;
+    for (const m of $models) {
+      if (m.status === 'DELIVERED' || m.status === 'CANCELLED') continue;
+      const inspections = $qualityInspections
+        .filter((q) => q.modelId === m.id)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      if (inspections.length > 0 && inspections[0].result === 'FAIL') count++;
+    }
+    return count;
+  }
+);
+
+export const qualityPassedPendingDeliveryCount = derived(
+  [models, qualityInspections],
+  ([$models, $qualityInspections]) => {
+    let count = 0;
+    for (const m of $models) {
+      if (m.status === 'DELIVERED' || m.status === 'CANCELLED') continue;
+      const inspections = $qualityInspections
+        .filter((q) => q.modelId === m.id)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      if (inspections.length > 0 && inspections[0].result === 'PASS') count++;
+    }
+    return count;
+  }
+);

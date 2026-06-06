@@ -1,14 +1,22 @@
 <script lang="ts">
-  import type { FlowStatus, DentureType } from '$lib/types';
-  import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL } from '$lib/types';
+  import type { FlowStatus, DentureType, QualityStatus } from '$lib/types';
+  import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, QUALITY_STATUS_LABEL } from '$lib/types';
 
   export let searchText: string = '';
   export let statusFilter: FlowStatus | '' = '';
   export let typeFilter: DentureType | '' = '';
   export let personFilter: string = '';
+  export let qualityStatusFilter: QualityStatus | '' = '';
   export let responsiblePersons: string[] = [];
 
   let showAdvanced = false;
+
+  const qualityFilterOptions: { value: QualityStatus | ''; label: string }[] = [
+    { value: '', label: '全部质检状态' },
+    { value: 'PENDING', label: QUALITY_STATUS_LABEL.PENDING },
+    { value: 'FAILED', label: QUALITY_STATUS_LABEL.FAILED },
+    { value: 'PASSED_PENDING_DELIVERY', label: QUALITY_STATUS_LABEL.PASSED_PENDING_DELIVERY }
+  ];
 </script>
 
 <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mb-6">
@@ -35,6 +43,7 @@
           statusFilter = '';
           typeFilter = '';
           personFilter = '';
+          qualityStatusFilter = '';
         }}
         class="btn-secondary whitespace-nowrap"
       >
@@ -44,7 +53,7 @@
   </div>
 
   {#if showAdvanced}
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-100">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-100">
       <div>
         <label class="label-text">流转状态</label>
         <select bind:value={statusFilter} class="input-field">
@@ -69,6 +78,14 @@
           <option value="">全部负责人</option>
           {#each responsiblePersons as person}
             <option value={person}>{person}</option>
+          {/each}
+        </select>
+      </div>
+      <div>
+        <label class="label-text">质检状态</label>
+        <select bind:value={qualityStatusFilter} class="input-field">
+          {#each qualityFilterOptions as opt}
+            <option value={opt.value}>{opt.label}</option>
           {/each}
         </select>
       </div>

@@ -5,7 +5,7 @@
   import AppHeader from '$components/AppHeader.svelte';
   import StatCard from '$components/StatCard.svelte';
   import StatusBadge from '$components/StatusBadge.svelte';
-  import { models, modelsByStatus, overdueModels, upcomingModels, delayReasonStats, totalRescheduleCount, upcomingAndOverdueModels } from '$lib/store';
+  import { models, modelsByStatus, overdueModels, upcomingModels, delayReasonStats, totalRescheduleCount, upcomingAndOverdueModels, pendingQualityInspectionCount, qualityInspectionPassRate, totalReworkCount } from '$lib/store';
   import type { Model } from '$lib/types';
   import { DENTURE_TYPE_LABEL, DEFAULT_REMINDER_DAYS } from '$lib/types';
   import { formatDate, daysRemaining, getLastNDates, getDeliveryStatus } from '$lib/formatters';
@@ -201,6 +201,12 @@
     <StatCard title="即将到期" value={$upcomingModels.length} icon="⏰" gradient="from-amber-500 to-amber-600" subtitle="提醒日内到期" />
     <StatCard title="已延期" value={$overdueModels.length} icon="⚠️" gradient="from-warning-red-500 to-warning-red-600" subtitle="需及时处理" />
     <StatCard title="重新约期次数" value={$totalRescheduleCount} icon="📅" gradient="from-purple-500 to-purple-600" subtitle="累计变更交付日期" />
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    <StatCard title="待质检数量" value={$pendingQualityInspectionCount} icon="🔍" gradient="from-orange-500 to-orange-600" subtitle="需及时安排验收" />
+    <StatCard title="质检通过率" value={$qualityInspectionPassRate.total > 0 ? `${$qualityInspectionPassRate.rate}%` : '-'} icon="✅" gradient="from-teal-500 to-teal-600" subtitle={$qualityInspectionPassRate.total > 0 ? `通过 {$qualityInspectionPassRate.passed}/共 {$qualityInspectionPassRate.total}` : '暂无质检数据'} />
+    <StatCard title="返工次数" value={$totalReworkCount} icon="🔄" gradient="from-red-500 to-red-600" subtitle="累计质检不通过次数" />
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">

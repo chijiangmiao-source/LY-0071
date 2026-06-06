@@ -4,6 +4,22 @@ export type DentureType = 'FULL_DENTURE' | 'PARTIAL_DENTURE' | 'CROWN' | 'BRIDGE
 
 export type ReminderDays = 1 | 3 | 7;
 
+export type InspectionResult = 'PASS' | 'FAIL';
+
+export type QualityStatus = 'PENDING' | 'FAILED' | 'PASSED_PENDING_DELIVERY' | 'NONE';
+
+export interface QualityInspection {
+  id: string;
+  modelId: string;
+  inspector: string;
+  inspectionDate: string;
+  result: InspectionResult;
+  problemDescription?: string;
+  reworkRequirements?: string;
+  handlingRemarks?: string;
+  createdAt: string;
+}
+
 export interface DeliveryDateHistory {
   id: string;
   previousDate: string;
@@ -54,8 +70,35 @@ export interface StorageData {
   models: Model[];
   steps: Step[];
   reminderLogs: ReminderLog[];
+  qualityInspections: QualityInspection[];
   updatedAt: string;
 }
+
+export const INSPECTION_RESULT_LABEL: Record<InspectionResult, string> = {
+  PASS: '通过',
+  FAIL: '不通过'
+};
+
+export const QUALITY_STATUS_LABEL: Record<QualityStatus, string> = {
+  PENDING: '待质检',
+  FAILED: '质检未通过',
+  PASSED_PENDING_DELIVERY: '质检通过待交付',
+  NONE: ''
+};
+
+export const QUALITY_STATUS_COLOR: Record<QualityStatus, string> = {
+  PENDING: 'bg-orange-100 text-orange-700 border-orange-300',
+  FAILED: 'bg-red-100 text-red-700 border-red-300',
+  PASSED_PENDING_DELIVERY: 'bg-teal-100 text-teal-700 border-teal-300',
+  NONE: ''
+};
+
+export const QUALITY_STATUS_DOT_COLOR: Record<QualityStatus, string> = {
+  PENDING: 'bg-orange-500',
+  FAILED: 'bg-red-500',
+  PASSED_PENDING_DELIVERY: 'bg-teal-500',
+  NONE: ''
+};
 
 export interface ValidationResult {
   valid: boolean;

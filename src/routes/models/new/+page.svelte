@@ -140,7 +140,7 @@ let deliverWarningMessage = '';
       reminderDays,
       delayReason: delayReason.trim() || undefined
     };
-    const result = validateModel(data, get(models), localSteps);
+    const result = validateModel(data, get(models), localSteps, undefined, []);
     if (!result.valid) {
       errors = result.errors;
       return;

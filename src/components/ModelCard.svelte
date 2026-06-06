@@ -1,12 +1,17 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import StatusBadge from './StatusBadge.svelte';
-  import type { Model, Step } from '$lib/types';
+  import QualityStatusBadge from './QualityStatusBadge.svelte';
+  import type { Model, Step, QualityStatus } from '$lib/types';
   import { DENTURE_TYPE_LABEL, DEFAULT_REMINDER_DAYS } from '$lib/types';
   import { formatDate, isOverdue, daysRemaining, getDeliveryStatus } from '$lib/formatters';
+  import { getQualityStatus } from '$lib/store';
 
   export let model: Model;
   export let steps: Step[] = [];
+
+  let qualityStatus: QualityStatus = 'NONE';
+  let showQualityAlert = false;
 
   $: completedSteps = steps.filter((s) => s.completed).length;
   $: totalSteps = steps.length;
@@ -20,6 +25,10 @@
   $: upcoming = deliveryStatus === 'UPCOMING';
   $: remaining = daysRemaining(model.expectedDeliveryDate);
   $: showAlert = overdue || upcoming;
+  $: {
+    qualityStatus = getQualityStatus(model);
+    showQualityAlert = qualityStatus === 'PENDING' || qualityStatus === 'FAILED';
+  }
 
   function handleEdit() {
     goto(`/models/${model.id}`);
@@ -28,14 +37,28 @@
 
 <div
   class="bg-white rounded-2xl shadow-sm border card-hover overflow-hidden {
-    overdue
+    qualityStatus === 'FAILED'
+      ? 'border-red-400 ring-2 ring-red-100'
+      : qualityStatus === 'PENDING'
+      ? 'border-orange-400 ring-2 ring-orange-100'
+      : overdue
       ? 'border-warning-red-300 ring-2 ring-warning-red-100'
       : upcoming
       ? 'border-amber-300 ring-2 ring-amber-100'
       : 'border-slate-100'
   }"
 >
-  {#if showAlert}
+  {#if qualityStatus === 'FAILED'}
+    <div class="bg-red-500 text-white text-xs font-medium px-4 py-1.5 flex items-center gap-1.5">
+      <span>❌</span>
+      <span>质检未通过，需返工处理</span>
+    </div>
+  {:else if qualityStatus === 'PENDING'}
+    <div class="bg-orange-500 text-white text-xs font-medium px-4 py-1.5 flex items-center gap-1.5">
+      <span>🔍</span>
+      <span>待质检，请及时安排验收</span>
+    </div>
+  {:else if showAlert}
     <div class="{overdue ? 'bg-warning-red-500' : 'bg-amber-500'} text-white text-xs font-medium px-4 py-1.5 flex items-center gap-1.5">
       <span>{overdue ? '⚠️' : '⏰'}</span>
       <span>
@@ -56,11 +79,12 @@
   <div class="p-5">
     <div class="flex items-start justify-between mb-3">
       <div>
-        <div class="flex items-center gap-2 mb-1">
+        <div class="flex items-center gap-2 mb-1 flex-wrap">
           <span class="text-sm font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
             {model.modelNo}
           </span>
           <StatusBadge status={model.status} />
+          <QualityStatusBadge status={qualityStatus} />
         </div>
         <h3 class="text-lg font-bold text-slate-800">{model.patientName}</h3>
       </div>

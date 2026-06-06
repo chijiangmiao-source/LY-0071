@@ -3,14 +3,15 @@
   import AppHeader from '$components/AppHeader.svelte';
   import ModelCard from '$components/ModelCard.svelte';
   import SearchFilter from '$components/SearchFilter.svelte';
-  import { models, steps } from '$lib/store';
-  import type { FlowStatus, DentureType, Model, Step } from '$lib/types';
+  import { models, steps, getQualityStatus } from '$lib/store';
+  import type { FlowStatus, DentureType, Model, Step, QualityStatus } from '$lib/types';
   import { derived, get } from 'svelte/store';
 
   let searchText = '';
   let statusFilter: FlowStatus | '' = '';
   let typeFilter: DentureType | '' = '';
   let personFilter = '';
+  let qualityStatusFilter: QualityStatus | '' = '';
 
   const responsiblePersons = derived(models, ($models) => {
     const set = new Set<string>();
@@ -37,6 +38,10 @@
     if (statusFilter && m.status !== statusFilter) return false;
     if (typeFilter && m.dentureType !== typeFilter) return false;
     if (personFilter && m.responsiblePerson !== personFilter) return false;
+    if (qualityStatusFilter) {
+      const qs = getQualityStatus(m);
+      if (qs !== qualityStatusFilter) return false;
+    }
     return true;
   });
 
@@ -53,7 +58,7 @@
       <h2 class="text-2xl font-bold text-slate-800 mb-1">模型列表</h2>
       <p class="text-sm text-slate-500">
         共 {sortedModels.length} 个模型
-        {#if searchText || statusFilter || typeFilter || personFilter}
+        {#if searchText || statusFilter || typeFilter || personFilter || qualityStatusFilter}
           （已筛选）
         {/if}
       </p>
@@ -68,6 +73,7 @@
     bind:statusFilter
     bind:typeFilter
     bind:personFilter
+    bind:qualityStatusFilter
     responsiblePersons={$responsiblePersons}
   />
 
@@ -76,7 +82,7 @@
       <div class="text-6xl mb-4">🦷</div>
       <h3 class="text-lg font-semibold text-slate-700 mb-2">暂无模型数据</h3>
       <p class="text-slate-500 mb-6">
-        {searchText || statusFilter || typeFilter || personFilter
+        {searchText || statusFilter || typeFilter || personFilter || qualityStatusFilter
           ? '没有找到符合条件的模型，请调整筛选条件'
           : '点击下方按钮添加第一个义齿模型'}
       </p>
