@@ -1,13 +1,31 @@
-import type { StorageData } from './types';
+import type { StorageData, Model } from './types';
+import { DEFAULT_REMINDER_DAYS } from './types';
 
 const STORAGE_KEY = 'denture_models_v1';
+
+function migrateModel(model: any): Model {
+  return {
+    ...model,
+    reminderDays: model.reminderDays ?? DEFAULT_REMINDER_DAYS,
+    reminded: model.reminded ?? false,
+    remindedAt: model.remindedAt,
+    delayReason: model.delayReason,
+    deliveryDateHistory: model.deliveryDateHistory ?? []
+  };
+}
 
 export function loadFromStorage(): StorageData | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as StorageData;
+    const parsed = JSON.parse(raw) as any;
+    return {
+      models: (parsed.models || []).map(migrateModel),
+      steps: parsed.steps || [],
+      reminderLogs: parsed.reminderLogs || [],
+      updatedAt: parsed.updatedAt || new Date().toISOString()
+    };
   } catch (e) {
     console.error('Failed to load from storage:', e);
     return null;

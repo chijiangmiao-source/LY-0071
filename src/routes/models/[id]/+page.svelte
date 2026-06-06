@@ -15,16 +15,18 @@
     updateModel,
     deleteModel,
     getModelById,
-    getStepsByModelId
+    getStepsByModelId,
+    markAsReminded,
+    rescheduleDeliveryDate
   } from '$lib/store';
   import {
     validateModel,
     canTransitionTo,
     canMarkDelivered
   } from '$lib/validators';
-  import type { FlowStatus, DentureType, Model, Step } from '$lib/types';
-  import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES } from '$lib/types';
-  import { todayStr, formatDate, isOverdue, daysRemaining } from '$lib/formatters';
+  import type { FlowStatus, DentureType, Model, Step, ReminderDays, DeliveryDateHistory } from '$lib/types';
+  import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES, REMINDER_DAYS_OPTIONS, DEFAULT_REMINDER_DAYS } from '$lib/types';
+  import { todayStr, formatDate, isOverdue, daysRemaining, getDeliveryStatus } from '$lib/formatters';
   import { get } from 'svelte/store';
 
   let modelId = '';
@@ -36,6 +38,11 @@
   let expectedDeliveryDate = '';
   let responsiblePerson = '';
   let status: FlowStatus = 'PENDING';
+  let reminderDays: ReminderDays = DEFAULT_REMINDER_DAYS;
+  let reminded = false;
+  let remindedAt = '';
+  let delayReason = '';
+  let deliveryDateHistory: DeliveryDateHistory[] = [];
   let errors: Record<string, string> = {};
   let saving = false;
   let editingStep: Step | null = null;
@@ -44,8 +51,12 @@
   let deliverWarningMessage = '';
   let showDeleteConfirm = false;
   let deleting = false;
+  let showRescheduleModal = false;
+  let rescheduleNewDate = '';
+  let rescheduleReason = '';
+  let rescheduleErrors: Record<string, string> = {};
 
-  $: modelId = $page.params.id;
+  $: modelId = $page.params.id ?? '';
   $: localSteps = get(steps).filter((s) => s.modelId === modelId);
 
   const dentureTypeOptions = Object.entries(DENTURE_TYPE_LABEL) as [DentureType, string][];
@@ -64,6 +75,11 @@
     expectedDeliveryDate = found.expectedDeliveryDate;
     responsiblePerson = found.responsiblePerson;
     status = found.status;
+    reminderDays = found.reminderDays ?? DEFAULT_REMINDER_DAYS;
+    reminded = found.reminded ?? false;
+    remindedAt = found.remindedAt ?? '';
+    delayReason = found.delayReason ?? '';
+    deliveryDateHistory = found.deliveryDateHistory ?? [];
     loaded = true;
   });
 
@@ -122,7 +138,12 @@
       impressionDate,
       expectedDeliveryDate,
       responsiblePerson: responsiblePerson.trim(),
-      status
+      status,
+      reminderDays,
+      reminded,
+      remindedAt: remindedAt || undefined,
+      delayReason: delayReason.trim() || undefined,
+      deliveryDateHistory
     };
     const result = validateModel(data, get(models), localSteps, modelId);
     if (!result.valid) {
@@ -150,9 +171,55 @@
     }
   }
 
+  function handleMarkReminded() {
+    markAsReminded(modelId);
+    reminded = true;
+    remindedAt = new Date().toISOString();
+  }
+
+  function openRescheduleModal() {
+    rescheduleNewDate = expectedDeliveryDate;
+    rescheduleReason = delayReason;
+    rescheduleErrors = {};
+    showRescheduleModal = true;
+  }
+
+  function handleRescheduleSubmit() {
+    const errors: Record<string, string> = {};
+    if (!rescheduleNewDate) {
+      errors.newDate = '请选择新的交付日期';
+    } else if (rescheduleNewDate <= expectedDeliveryDate) {
+      errors.newDate = '新日期必须晚于当前预计交付日期';
+    }
+    if (!rescheduleReason || !rescheduleReason.trim()) {
+      errors.reason = '请填写延期原因';
+    }
+    if (Object.keys(errors).length > 0) {
+      rescheduleErrors = errors;
+      return;
+    }
+    rescheduleDeliveryDate(modelId, rescheduleNewDate, rescheduleReason.trim(), responsiblePerson || '系统');
+    expectedDeliveryDate = rescheduleNewDate;
+    delayReason = rescheduleReason.trim();
+    reminded = false;
+    remindedAt = '';
+    deliveryDateHistory = [...deliveryDateHistory, {
+      id: 'tmp_' + Date.now(),
+      previousDate: model?.expectedDeliveryDate || '',
+      newDate: rescheduleNewDate,
+      reason: rescheduleReason.trim(),
+      changedAt: new Date().toISOString(),
+      changedBy: responsiblePerson || '系统'
+    }];
+    showRescheduleModal = false;
+  }
+
   $: completedCount = localSteps.filter((s) => s.completed).length;
   $: overdue = loaded && isOverdue(expectedDeliveryDate, status);
   $: remaining = daysRemaining(expectedDeliveryDate);
+  $: deliveryStatus = loaded ? getDeliveryStatus(expectedDeliveryDate, status, reminderDays) : 'NORMAL';
+  $: isUpcoming = deliveryStatus === 'UPCOMING';
+  $: isOverdueStatus = deliveryStatus === 'OVERDUE';
 </script>
 
 <AppHeader />
@@ -172,13 +239,26 @@
             </span>
           </h2>
           <StatusBadge status={status} size="md" />
-          {#if overdue}
+          {#if isOverdueStatus}
             <span class="inline-flex items-center gap-1 px-3 py-1 bg-warning-red-500 text-white text-sm font-medium rounded-full">
               ⚠️
-              {#if remaining < 0}
-                已延期 {Math.abs(remaining)} 天
-              {:else if remaining === 0}
+              已延期 {Math.abs(remaining)} 天
+            </span>
+          {:else if isUpcoming}
+            <span class="inline-flex items-center gap-1 px-3 py-1 bg-amber-500 text-white text-sm font-medium rounded-full">
+              ⏰
+              {#if remaining === 0}
                 今日到期
+              {:else}
+                剩余 {remaining} 天到期
+              {/if}
+            </span>
+          {/if}
+          {#if reminded}
+            <span class="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-700 text-sm font-medium rounded-full border border-green-200">
+              ✓ 已提醒
+              {#if remindedAt}
+                ({formatDate(remindedAt)})
               {/if}
             </span>
           {/if}
@@ -306,7 +386,102 @@
               </div>
             {/if}
           </div>
+
+          <div>
+            <label class="label-text">
+              交付提醒设置
+            </label>
+            <select
+              bind:value={reminderDays}
+              class="input-field"
+            >
+              {#each REMINDER_DAYS_OPTIONS as opt}
+                <option value={opt.value}>{opt.label}</option>
+              {/each}
+            </select>
+            <p class="text-xs text-slate-400 mt-1">在预计交付日前多少天开始提醒</p>
+          </div>
+
+          <div>
+            <label class="label-text">
+              延期原因（可选）
+            </label>
+            <input
+              type="text"
+              bind:value={delayReason}
+              placeholder="如有延期请说明原因"
+              class="input-field"
+            />
+          </div>
         </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+        <h3 class="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+          <span>🔔</span> 交付提醒与延期处理
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="space-y-3">
+            <div class="flex items-center gap-3">
+              <button
+                type="button"
+                on:click={handleMarkReminded}
+                disabled={reminded || status === 'DELIVERED' || status === 'CANCELLED'}
+                class="px-4 py-2 bg-medical-blue-500 text-white rounded-lg text-sm font-medium hover:bg-medical-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {reminded ? '✓ 已标记提醒' : '标记为已提醒'}
+              </button>
+              {#if reminded && remindedAt}
+                <span class="text-sm text-slate-500">
+                  提醒时间：{formatDate(remindedAt)}
+                </span>
+              {/if}
+            </div>
+            <p class="text-xs text-slate-400">
+              点击后将记录本次提醒操作，便于后续追踪
+            </p>
+          </div>
+
+          <div class="space-y-3">
+            <button
+              type="button"
+              on:click={openRescheduleModal}
+              disabled={status === 'DELIVERED' || status === 'CANCELLED'}
+              class="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              📅 重新约定交付日期
+            </button>
+            <p class="text-xs text-slate-400">
+              已重新约期 {deliveryDateHistory.length} 次，原日期将作为历史记录保留
+            </p>
+          </div>
+        </div>
+
+        {#if deliveryDateHistory.length > 0}
+          <div class="mt-6 pt-5 border-t border-slate-100">
+            <h4 class="text-sm font-semibold text-slate-700 mb-3">📋 交付日期变更历史</h4>
+            <div class="space-y-2">
+              {#each deliveryDateHistory as record (record.id)}
+                <div class="bg-slate-50 rounded-lg p-3 text-sm flex items-start justify-between gap-3 flex-wrap">
+                  <div class="flex items-center gap-4 flex-wrap">
+                    <span class="text-slate-500">
+                      原日期：<span class="text-slate-700 font-medium line-through">{formatDate(record.previousDate)}</span>
+                    </span>
+                    <span class="text-slate-500">
+                      → 新日期：<span class="text-medical-blue-600 font-medium">{formatDate(record.newDate)}</span>
+                    </span>
+                    <span class="text-slate-500">
+                      原因：<span class="text-slate-700">{record.reason}</span>
+                    </span>
+                  </div>
+                  <span class="text-xs text-slate-400 whitespace-nowrap">
+                    {formatDate(record.changedAt)} · {record.changedBy}
+                  </span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
       </div>
 
       <StepForm
@@ -451,6 +626,77 @@
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if showRescheduleModal}
+      <div
+        class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        on:click={() => (showRescheduleModal = false)}
+      >
+        <div
+          class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+          on:click|stopPropagation
+        >
+          <div class="flex items-start gap-4 mb-4">
+            <div class="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center text-2xl flex-shrink-0">
+              📅
+            </div>
+            <div class="flex-1">
+              <h3 class="text-lg font-bold text-slate-800 mb-1">重新约定交付日期</h3>
+              <p class="text-sm text-slate-500">
+                当前预计交付日期：<span class="font-medium text-slate-700">{formatDate(expectedDeliveryDate)}</span>
+              </p>
+            </div>
+          </div>
+
+          <div class="space-y-4">
+            <div>
+              <label class="label-text">
+                新的交付日期 <span class="text-warning-red-500">*</span>
+              </label>
+              <input
+                type="date"
+                bind:value={rescheduleNewDate}
+                min={todayStr()}
+                class="input-field {rescheduleErrors.newDate ? 'border-warning-red-400' : ''}"
+              />
+              {#if rescheduleErrors.newDate}
+                <p class="text-xs text-warning-red-500 mt-1">{rescheduleErrors.newDate}</p>
+              {/if}
+            </div>
+
+            <div>
+              <label class="label-text">
+                延期/变更原因 <span class="text-warning-red-500">*</span>
+              </label>
+              <textarea
+                bind:value={rescheduleReason}
+                placeholder="请详细说明变更交付日期的原因"
+                rows="3"
+                class="input-field {rescheduleErrors.reason ? 'border-warning-red-400' : ''} resize-none"
+              ></textarea>
+              {#if rescheduleErrors.reason}
+                <p class="text-xs text-warning-red-500 mt-1">{rescheduleErrors.reason}</p>
+              {/if}
+            </div>
+          </div>
+
+          <div class="flex gap-3 justify-end mt-5">
+            <button
+              on:click={() => (showRescheduleModal = false)}
+              class="btn-secondary text-sm"
+            >
+              取消
+            </button>
+            <button
+              on:click={handleRescheduleSubmit}
+              class="btn-primary text-sm"
+            >
+              确认变更
+            </button>
           </div>
         </div>
       </div>

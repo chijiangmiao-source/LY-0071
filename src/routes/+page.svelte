@@ -5,14 +5,15 @@
   import AppHeader from '$components/AppHeader.svelte';
   import StatCard from '$components/StatCard.svelte';
   import StatusBadge from '$components/StatusBadge.svelte';
-  import { models, modelsByStatus, overdueModels } from '$lib/store';
+  import { models, modelsByStatus, overdueModels, upcomingModels, delayReasonStats, totalRescheduleCount, upcomingAndOverdueModels } from '$lib/store';
   import type { Model } from '$lib/types';
-  import { DENTURE_TYPE_LABEL } from '$lib/types';
-  import { formatDate, daysRemaining, getLastNDates } from '$lib/formatters';
+  import { DENTURE_TYPE_LABEL, DEFAULT_REMINDER_DAYS } from '$lib/types';
+  import { formatDate, daysRemaining, getLastNDates, getDeliveryStatus } from '$lib/formatters';
   import { goto } from '$app/navigation';
 
   let chart1: any;
   let chart2: any;
+  let chart3: any;
   let ApexLoaded = false;
 
   onMount(async () => {
@@ -78,6 +79,39 @@
     chart2 = new ApexCharts(document.getElementById('trendChart'), lineOptions);
     chart2.render();
 
+    const barOptions = {
+      series: [{ name: '模型数量', data: [] }],
+      chart: { type: 'bar', height: 280, width: '100%', toolbar: { show: false } },
+      colors: ['#f59e0b'],
+      plotOptions: {
+        bar: {
+          horizontal: true,
+          borderRadius: 6,
+          barHeight: '50%'
+        }
+      },
+      dataLabels: {
+        enabled: true,
+        position: 'right',
+        style: { colors: ['#475569'] }
+      },
+      xaxis: {
+        categories: [],
+        labels: {
+          formatter: function(val: number) {
+            return Math.round(val).toString();
+          }
+        },
+        min: 0,
+        tickAmount: undefined,
+        forceNiceScale: true
+      },
+      yaxis: { labels: { style: { fontSize: '12px' } } },
+      grid: { borderColor: '#e2e8f0' }
+    };
+    chart3 = new ApexCharts(document.getElementById('delayReasonChart'), barOptions);
+    chart3.render();
+
     updateCharts();
     models.subscribe(() => updateCharts());
   }
@@ -105,6 +139,16 @@
       { name: '新增模型', data: addCounts },
       { name: '交付模型', data: delCounts }
     ]);
+
+    const reasonStats = get(delayReasonStats);
+    const reasonLabels = Object.keys(reasonStats);
+    const reasonValues = Object.values(reasonStats);
+    if (reasonLabels.length > 0) {
+      chart3?.updateOptions({
+        xaxis: { categories: reasonLabels }
+      });
+      chart3?.updateSeries([{ name: '模型数量', data: reasonValues }]);
+    }
   }
 
   function goToModel(id: string) {
@@ -114,6 +158,27 @@
   $: sortedOverdue = [...$overdueModels].sort(
     (a, b) => new Date(a.expectedDeliveryDate).getTime() - new Date(b.expectedDeliveryDate).getTime()
   );
+
+  $: sortedUpcoming = [...$upcomingModels].sort(
+    (a, b) => new Date(a.expectedDeliveryDate).getTime() - new Date(b.expectedDeliveryDate).getTime()
+  );
+
+  $: sortedAlerts = [...$upcomingAndOverdueModels].sort(
+    (a, b) => new Date(a.expectedDeliveryDate).getTime() - new Date(b.expectedDeliveryDate).getTime()
+  );
+
+  function getAlertItemStatus(model: Model) {
+    const deliveryStatus = getDeliveryStatus(
+      model.expectedDeliveryDate,
+      model.status,
+      model.reminderDays ?? DEFAULT_REMINDER_DAYS
+    );
+    return {
+      deliveryStatus,
+      remaining: daysRemaining(model.expectedDeliveryDate),
+      isOverdue: deliveryStatus === 'OVERDUE'
+    };
+  }
 </script>
 
 <AppHeader />
@@ -132,6 +197,12 @@
     <StatCard title="已交付" value={$modelsByStatus.DELIVERED} icon="✅" gradient="from-green-500 to-green-600" />
   </div>
 
+  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4 mb-6">
+    <StatCard title="即将到期" value={$upcomingModels.length} icon="⏰" gradient="from-amber-500 to-amber-600" subtitle="提醒日内到期" />
+    <StatCard title="已延期" value={$overdueModels.length} icon="⚠️" gradient="from-warning-red-500 to-warning-red-600" subtitle="需及时处理" />
+    <StatCard title="重新约期次数" value={$totalRescheduleCount} icon="📅" gradient="from-purple-500 to-purple-600" subtitle="累计变更交付日期" />
+  </div>
+
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
     <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
       <h3 class="text-base font-bold text-slate-800 mb-4">状态分布</h3>
@@ -143,15 +214,29 @@
     </div>
   </div>
 
+  <div class="grid grid-cols-1 lg:grid-cols-1 gap-6 mb-6">
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+      <h3 class="text-base font-bold text-slate-800 mb-4">延期原因分布</h3>
+      {#if Object.keys($delayReasonStats).length === 0}
+        <div class="py-12 text-center">
+          <div class="text-4xl mb-3">📊</div>
+          <p class="text-slate-500 text-sm">暂无延期原因数据</p>
+        </div>
+      {:else}
+        <div id="delayReasonChart" class="w-full"></div>
+      {/if}
+    </div>
+  </div>
+
   <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
     <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
       <div>
         <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
-          <span class="text-warning-red-500">⚠️</span>
-          延期预警
+          <span class="text-amber-500">🔔</span>
+          交付提醒与延期预警
         </h3>
         <p class="text-xs text-slate-500 mt-0.5">
-          共 {sortedOverdue.length} 个模型已延期，需及时处理
+          即将到期 {sortedUpcoming.length} 个 · 已延期 {sortedOverdue.length} 个，共 {sortedAlerts.length} 个模型需关注
         </p>
       </div>
       <a href="/models" class="text-sm text-medical-blue-600 hover:underline font-medium">
@@ -159,17 +244,17 @@
       </a>
     </div>
 
-    {#if sortedOverdue.length === 0}
+    {#if sortedAlerts.length === 0}
       <div class="p-12 text-center">
         <div class="text-5xl mb-3">🎉</div>
-        <p class="text-slate-500">暂无延期模型，做得很棒！</p>
+        <p class="text-slate-500">暂无需要提醒或延期的模型，做得很棒！</p>
       </div>
     {:else}
       <div class="divide-y divide-slate-100">
-        {#each sortedOverdue as model}
+        {#each sortedAlerts as model (model.id)}
           <button
             type="button"
-            class="w-full px-5 py-3 hover:bg-warning-red-50/50 transition-colors cursor-pointer flex items-center justify-between text-left"
+            class="w-full px-5 py-3 transition-colors cursor-pointer flex items-center justify-between text-left {getAlertItemStatus(model).isOverdue ? 'hover:bg-warning-red-50/50' : 'hover:bg-amber-50/50'}"
             on:click={() => goToModel(model.id)}
           >
             <div class="flex items-center gap-3">
@@ -177,7 +262,12 @@
                 {model.modelNo}
               </span>
               <div>
-                <p class="font-medium text-slate-800">{model.patientName}</p>
+                <div class="flex items-center gap-2">
+                  <p class="font-medium text-slate-800">{model.patientName}</p>
+                  {#if model.reminded}
+                    <span class="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full border border-green-200">已提醒</span>
+                  {/if}
+                </div>
                 <p class="text-xs text-slate-500">
                   {DENTURE_TYPE_LABEL[model.dentureType]} · 负责人: {model.responsiblePerson}
                 </p>
@@ -186,11 +276,17 @@
             <div class="flex items-center gap-3">
               <StatusBadge status={model.status} />
               <div class="text-right">
-                <p class="text-sm font-semibold text-warning-red-600">
-                  延期 {Math.abs(daysRemaining(model.expectedDeliveryDate))} 天
+                <p class="text-sm font-semibold {getAlertItemStatus(model).isOverdue ? 'text-warning-red-600' : 'text-amber-600'}">
+                  {#if getAlertItemStatus(model).isOverdue}
+                    延期 {Math.abs(getAlertItemStatus(model).remaining)} 天
+                  {:else if getAlertItemStatus(model).remaining === 0}
+                    今日到期
+                  {:else}
+                    剩余 {getAlertItemStatus(model).remaining} 天
+                  {/if}
                 </p>
                 <p class="text-xs text-slate-400">
-                  应交付: {formatDate(model.expectedDeliveryDate)}
+                  预计交付: {formatDate(model.expectedDeliveryDate)}
                 </p>
               </div>
             </div>

@@ -14,23 +14,25 @@
     canTransitionTo,
     canMarkDelivered
   } from '$lib/validators';
-  import type { FlowStatus, DentureType, Model, Step } from '$lib/types';
-  import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES } from '$lib/types';
-  import { todayStr, formatDate } from '$lib/formatters';
+  import type { FlowStatus, DentureType, Model, Step, ReminderDays } from '$lib/types';
+import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES, REMINDER_DAYS_OPTIONS, DEFAULT_REMINDER_DAYS } from '$lib/types';
+import { todayStr, formatDate } from '$lib/formatters';
 
-  let modelNo = '';
-  let patientName = '';
-  let dentureType: DentureType = 'CROWN';
-  let impressionDate = todayStr();
-  let expectedDeliveryDate = '';
-  let responsiblePerson = '';
-  let status: FlowStatus = 'PENDING';
-  let errors: Record<string, string> = {};
-  let saving = false;
-  let editingStep: Step | null = null;
-  let localSteps: Step[] = [];
-  let showDeliverWarning = false;
-  let deliverWarningMessage = '';
+let modelNo = '';
+let patientName = '';
+let dentureType: DentureType = 'CROWN';
+let impressionDate = todayStr();
+let expectedDeliveryDate = '';
+let responsiblePerson = '';
+let status: FlowStatus = 'PENDING';
+let reminderDays: ReminderDays = DEFAULT_REMINDER_DAYS;
+let delayReason = '';
+let errors: Record<string, string> = {};
+let saving = false;
+let editingStep: Step | null = null;
+let localSteps: Step[] = [];
+let showDeliverWarning = false;
+let deliverWarningMessage = '';
 
   const dentureTypeOptions = Object.entries(DENTURE_TYPE_LABEL) as [DentureType, string][];
 
@@ -120,7 +122,9 @@
       impressionDate,
       expectedDeliveryDate,
       responsiblePerson: responsiblePerson.trim(),
-      status
+      status,
+      reminderDays,
+      delayReason: delayReason.trim() || undefined
     };
     const result = validateModel(data, get(models), localSteps);
     if (!result.valid) {
@@ -261,27 +265,54 @@
         </div>
 
         <div class="md:col-span-2">
-          <label class="label-text">
-            流转状态 <span class="text-warning-red-500">*</span>
-          </label>
-          <select
-            bind:value={status}
-            on:change={onStatusChange}
-            class="input-field {errors.status ? 'border-warning-red-400' : ''}"
-          >
-            {#each Object.entries(FLOW_STATUS_LABEL) as [value, label]}
-              <option value={value}>{label}</option>
-            {/each}
-          </select>
-          {#if showDeliverWarning}
-            <div class="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
-              ⚠️ {deliverWarningMessage}
-            </div>
-          {/if}
-          {#if errors.status}
-            <p class="text-xs text-warning-red-500 mt-1">{errors.status}</p>
-          {/if}
-        </div>
+            <label class="label-text">
+              流转状态 <span class="text-warning-red-500">*</span>
+            </label>
+            <select
+              bind:value={status}
+              on:change={onStatusChange}
+              class="input-field {errors.status ? 'border-warning-red-400' : ''}"
+            >
+              {#each Object.entries(FLOW_STATUS_LABEL) as [value, label]}
+                <option value={value}>{label}</option>
+              {/each}
+            </select>
+            {#if showDeliverWarning}
+              <div class="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
+                ⚠️ {deliverWarningMessage}
+              </div>
+            {/if}
+            {#if errors.status}
+              <p class="text-xs text-warning-red-500 mt-1">{errors.status}</p>
+            {/if}
+          </div>
+
+          <div>
+            <label class="label-text">
+              交付提醒设置
+            </label>
+            <select
+              bind:value={reminderDays}
+              class="input-field"
+            >
+              {#each REMINDER_DAYS_OPTIONS as opt}
+                <option value={opt.value}>{opt.label}</option>
+              {/each}
+            </select>
+            <p class="text-xs text-slate-400 mt-1">在预计交付日前多少天开始提醒</p>
+          </div>
+
+          <div>
+            <label class="label-text">
+              延期原因（可选）
+            </label>
+            <input
+              type="text"
+              bind:value={delayReason}
+              placeholder="如有延期请说明原因"
+              class="input-field"
+            />
+          </div>
       </div>
     </div>
 

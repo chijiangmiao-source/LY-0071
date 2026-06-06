@@ -2,8 +2,8 @@
   import { goto } from '$app/navigation';
   import StatusBadge from './StatusBadge.svelte';
   import type { Model, Step } from '$lib/types';
-  import { DENTURE_TYPE_LABEL } from '$lib/types';
-  import { formatDate, isOverdue, daysRemaining } from '$lib/formatters';
+  import { DENTURE_TYPE_LABEL, DEFAULT_REMINDER_DAYS } from '$lib/types';
+  import { formatDate, isOverdue, daysRemaining, getDeliveryStatus } from '$lib/formatters';
 
   export let model: Model;
   export let steps: Step[] = [];
@@ -11,8 +11,15 @@
   $: completedSteps = steps.filter((s) => s.completed).length;
   $: totalSteps = steps.length;
   $: progress = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
-  $: overdue = isOverdue(model.expectedDeliveryDate, model.status);
+  $: deliveryStatus = getDeliveryStatus(
+    model.expectedDeliveryDate,
+    model.status,
+    model.reminderDays ?? DEFAULT_REMINDER_DAYS
+  );
+  $: overdue = deliveryStatus === 'OVERDUE';
+  $: upcoming = deliveryStatus === 'UPCOMING';
   $: remaining = daysRemaining(model.expectedDeliveryDate);
+  $: showAlert = overdue || upcoming;
 
   function handleEdit() {
     goto(`/models/${model.id}`);
@@ -21,21 +28,28 @@
 
 <div
   class="bg-white rounded-2xl shadow-sm border card-hover overflow-hidden {
-    overdue ? 'border-warning-red-300 ring-2 ring-warning-red-100' : 'border-slate-100'
+    overdue
+      ? 'border-warning-red-300 ring-2 ring-warning-red-100'
+      : upcoming
+      ? 'border-amber-300 ring-2 ring-amber-100'
+      : 'border-slate-100'
   }"
 >
-  {#if overdue}
-    <div class="bg-warning-red-500 text-white text-xs font-medium px-4 py-1.5 flex items-center gap-1.5">
-      <span>⚠️</span>
+  {#if showAlert}
+    <div class="{overdue ? 'bg-warning-red-500' : 'bg-amber-500'} text-white text-xs font-medium px-4 py-1.5 flex items-center gap-1.5">
+      <span>{overdue ? '⚠️' : '⏰'}</span>
       <span>
-        {#if remaining < 0}
+        {#if overdue}
           已延期 {Math.abs(remaining)} 天
         {:else if remaining === 0}
           今日到期
         {:else}
-          剩余 {remaining} 天
+          剩余 {remaining} 天到期
         {/if}
       </span>
+      {#if model.reminded}
+        <span class="ml-auto bg-white/20 px-2 py-0.5 rounded-full text-[10px]">已提醒</span>
+      {/if}
     </div>
   {/if}
 
@@ -76,7 +90,7 @@
       </div>
       <div class="flex items-center gap-2 text-sm">
         <span class="text-slate-400">🎯</span>
-        <span class={overdue ? 'text-warning-red-600 font-medium' : 'text-slate-600'}>
+        <span class={overdue ? 'text-warning-red-600 font-medium' : upcoming ? 'text-amber-600 font-medium' : 'text-slate-600'}>
           预计: {formatDate(model.expectedDeliveryDate)}
         </span>
       </div>

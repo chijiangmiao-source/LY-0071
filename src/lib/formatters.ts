@@ -50,3 +50,25 @@ export function getLastNDates(n: number): string[] {
   }
   return dates;
 }
+
+export type DeliveryStatus = 'NORMAL' | 'UPCOMING' | 'OVERDUE';
+
+export function getDeliveryStatus(
+  expectedDate: string,
+  status: string,
+  reminderDays: number = 3
+): DeliveryStatus {
+  if (!expectedDate || status === 'DELIVERED' || status === 'CANCELLED') return 'NORMAL';
+  const remaining = daysRemaining(expectedDate);
+  if (remaining < 0) return 'OVERDUE';
+  if (remaining <= reminderDays) return 'UPCOMING';
+  return 'NORMAL';
+}
+
+export function isUpcoming(
+  expectedDate: string,
+  status: string,
+  reminderDays: number = 3
+): boolean {
+  return getDeliveryStatus(expectedDate, status, reminderDays) === 'UPCOMING';
+}

@@ -2,6 +2,25 @@ export type FlowStatus = 'PENDING' | 'IN_PROGRESS' | 'TRIAL' | 'DELIVERED' | 'CA
 
 export type DentureType = 'FULL_DENTURE' | 'PARTIAL_DENTURE' | 'CROWN' | 'BRIDGE' | 'IMPLANT' | 'ORTHODONTIC';
 
+export type ReminderDays = 1 | 3 | 7;
+
+export interface DeliveryDateHistory {
+  id: string;
+  previousDate: string;
+  newDate: string;
+  reason: string;
+  changedAt: string;
+  changedBy: string;
+}
+
+export interface ReminderLog {
+  id: string;
+  modelId: string;
+  remindedAt: string;
+  type: 'UPCOMING' | 'OVERDUE';
+  note?: string;
+}
+
 export interface Model {
   id: string;
   modelNo: string;
@@ -13,6 +32,11 @@ export interface Model {
   status: FlowStatus;
   createdAt: string;
   updatedAt: string;
+  reminderDays?: ReminderDays;
+  reminded: boolean;
+  remindedAt?: string;
+  delayReason?: string;
+  deliveryDateHistory: DeliveryDateHistory[];
 }
 
 export interface Step {
@@ -29,6 +53,7 @@ export interface Step {
 export interface StorageData {
   models: Model[];
   steps: Step[];
+  reminderLogs: ReminderLog[];
   updatedAt: string;
 }
 
@@ -70,3 +95,11 @@ export const DEFAULT_STEP_NAMES = [
   '上瓷/排牙',
   '最终质检'
 ];
+
+export const REMINDER_DAYS_OPTIONS: { value: ReminderDays; label: string }[] = [
+  { value: 1, label: '提前 1 天' },
+  { value: 3, label: '提前 3 天' },
+  { value: 7, label: '提前 7 天' }
+];
+
+export const DEFAULT_REMINDER_DAYS: ReminderDays = 3;
