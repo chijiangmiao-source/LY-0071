@@ -5,7 +5,7 @@
   import AppHeader from '$components/AppHeader.svelte';
   import StatCard from '$components/StatCard.svelte';
   import StatusBadge from '$components/StatusBadge.svelte';
-  import { models, modelsByStatus, overdueModels, upcomingModels, delayReasonStats, totalRescheduleCount, upcomingAndOverdueModels, pendingQualityInspectionCount, qualityInspectionPassRate, totalReworkCount } from '$lib/store';
+  import { models, modelsByStatus, overdueModels, upcomingModels, delayReasonStats, totalRescheduleCount, upcomingAndOverdueModels, pendingQualityInspectionCount, qualityInspectionPassRate, totalReworkCount, activeReworkCount } from '$lib/store';
   import type { Model } from '$lib/types';
   import { DENTURE_TYPE_LABEL, DEFAULT_REMINDER_DAYS } from '$lib/types';
   import { formatDate, daysRemaining, getLastNDates, getDeliveryStatus } from '$lib/formatters';
@@ -167,6 +167,11 @@
     (a, b) => new Date(a.expectedDeliveryDate).getTime() - new Date(b.expectedDeliveryDate).getTime()
   );
 
+  $: passRateSubtitle = (() => {
+    if ($qualityInspectionPassRate.total === 0) return '暂无质检数据';
+    return '通过 ' + $qualityInspectionPassRate.passed + ' / 共 ' + $qualityInspectionPassRate.total;
+  })();
+
   function getAlertItemStatus(model: Model) {
     const deliveryStatus = getDeliveryStatus(
       model.expectedDeliveryDate,
@@ -203,9 +208,10 @@
     <StatCard title="重新约期次数" value={$totalRescheduleCount} icon="📅" gradient="from-purple-500 to-purple-600" subtitle="累计变更交付日期" />
   </div>
 
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
     <StatCard title="待质检数量" value={$pendingQualityInspectionCount} icon="🔍" gradient="from-orange-500 to-orange-600" subtitle="需及时安排验收" />
-    <StatCard title="质检通过率" value={$qualityInspectionPassRate.total > 0 ? `${$qualityInspectionPassRate.rate}%` : '-'} icon="✅" gradient="from-teal-500 to-teal-600" subtitle={$qualityInspectionPassRate.total > 0 ? `通过 {$qualityInspectionPassRate.passed}/共 {$qualityInspectionPassRate.total}` : '暂无质检数据'} />
+    <StatCard title="质检通过率" value={$qualityInspectionPassRate.total > 0 ? ($qualityInspectionPassRate.rate + '%') : '-'} icon="✅" gradient="from-teal-500 to-teal-600" subtitle={passRateSubtitle} />
+    <StatCard title="返工中" value={$activeReworkCount} icon="🛠️" gradient="from-amber-500 to-amber-600" subtitle="正在整改中" />
     <StatCard title="返工次数" value={$totalReworkCount} icon="🔄" gradient="from-red-500 to-red-600" subtitle="累计质检不通过次数" />
   </div>
 

@@ -7,15 +7,17 @@
   import {
     models,
     addModel,
-    addStep
+    addStep,
+    addQualityInspection
   } from '$lib/store';
   import {
     validateModel,
     canTransitionTo,
     canMarkDelivered
   } from '$lib/validators';
-  import type { FlowStatus, DentureType, Model, Step, ReminderDays } from '$lib/types';
-import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES, REMINDER_DAYS_OPTIONS, DEFAULT_REMINDER_DAYS } from '$lib/types';
+  import QualityInspectionForm from '$components/QualityInspectionForm.svelte';
+  import type { FlowStatus, DentureType, Model, Step, ReminderDays, QualityInspection } from '$lib/types';
+import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES, REMINDER_DAYS_OPTIONS, DEFAULT_REMINDER_DAYS, INSPECTION_RESULT_LABEL } from '$lib/types';
 import { todayStr, formatDate } from '$lib/formatters';
 
 let modelNo = '';
@@ -33,6 +35,7 @@ let editingStep: Step | null = null;
 let localSteps: Step[] = [];
 let showDeliverWarning = false;
 let deliverWarningMessage = '';
+let localInspections: Omit<QualityInspection, 'id' | 'createdAt'>[] = [];
 
   const dentureTypeOptions = Object.entries(DENTURE_TYPE_LABEL) as [DentureType, string][];
 
@@ -108,7 +111,7 @@ let deliverWarningMessage = '';
     const newStatus = target.value as FlowStatus;
 
     if (newStatus === 'DELIVERED') {
-      const check = canMarkDelivered(localSteps);
+      const check = canMarkDelivered(localSteps, localInspections as QualityInspection[]);
       if (!check.valid) {
         showDeliverWarning = true;
         deliverWarningMessage = check.message || '';
@@ -117,7 +120,7 @@ let deliverWarningMessage = '';
       }
     }
 
-    const check = canTransitionTo(status, newStatus, localSteps);
+    const check = canTransitionTo(status, newStatus, localSteps, localInspections as QualityInspection[]);
     if (!check.valid) {
       showDeliverWarning = true;
       deliverWarningMessage = check.message || '';
@@ -126,6 +129,11 @@ let deliverWarningMessage = '';
     }
     status = newStatus;
     showDeliverWarning = false;
+  }
+
+  function handleAddQualityInspection(e: CustomEvent) {
+    const data = e.detail as Omit<QualityInspection, 'id' | 'createdAt'>;
+    localInspections = [...localInspections, data];
   }
 
   async function handleSubmit() {
@@ -140,7 +148,7 @@ let deliverWarningMessage = '';
       reminderDays,
       delayReason: delayReason.trim() || undefined
     };
-    const result = validateModel(data, get(models), localSteps, undefined, []);
+    const result = validateModel(data, get(models), localSteps, undefined, localInspections as QualityInspection[]);
     if (!result.valid) {
       errors = result.errors;
       return;
@@ -154,6 +162,12 @@ let deliverWarningMessage = '';
         const { id: _tempId, modelId: _m, ...stepData } = step;
         addStep({
           ...stepData,
+          modelId: newModel.id
+        });
+      }
+      for (const inspection of localInspections) {
+        addQualityInspection({
+          ...inspection,
           modelId: newModel.id
         });
       }
@@ -426,6 +440,67 @@ let deliverWarningMessage = '';
         {/if}
       </div>
     </StepForm>
+
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+          <span>🔍</span> 质检验收（可选）
+        </h3>
+        {#if localInspections.length > 0}
+          <span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full border border-blue-200">
+            已录入 {localInspections.length} 条
+          </span>
+        {/if}
+      </div>
+      <p class="text-sm text-slate-500 mb-4">
+        如该模型已完成质检，可在此录入质检记录。未录入质检记录时，模型状态默认为「待质检」。
+      </p>
+      <QualityInspectionForm
+        modelId="temp_new_model"
+        defaultInspector={responsiblePerson}
+        on:submit={handleAddQualityInspection}
+      />
+      {#if localInspections.length > 0}
+        <div class="mt-6 pt-5 border-t border-slate-100">
+          <h4 class="text-sm font-semibold text-slate-700 mb-3">📋 已录入质检记录（共 {localInspections.length} 条）</h4>
+          <div class="space-y-3">
+            {#each localInspections as record, index (index)}
+              <div class="border border-slate-200 rounded-xl p-4 {record.result === 'PASS' ? 'bg-green-50/50 border-green-200' : 'bg-red-50/50 border-red-200'}">
+                <div class="flex items-start justify-between gap-3 flex-wrap">
+                  <div class="flex items-center gap-3 flex-wrap">
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border {record.result === 'PASS' ? 'bg-green-100 text-green-700 border-green-300' : 'bg-red-100 text-red-700 border-red-300'}">
+                      <span class="w-1.5 h-1.5 rounded-full {record.result === 'PASS' ? 'bg-green-500' : 'bg-red-500'}"></span>
+                      {INSPECTION_RESULT_LABEL[record.result]}
+                    </span>
+                    <span class="text-sm text-slate-600">
+                      质检人：<span class="font-medium text-slate-800">{record.inspector}</span>
+                    </span>
+                    <span class="text-sm text-slate-600">
+                      质检日期：<span class="font-medium text-slate-800">{formatDate(record.inspectionDate)}</span>
+                    </span>
+                  </div>
+                </div>
+                {#if record.problemDescription}
+                  <p class="text-sm text-slate-700 mt-3">
+                    <span class="font-medium">问题描述：</span>{record.problemDescription}
+                  </p>
+                {/if}
+                {#if record.reworkRequirements}
+                  <p class="text-sm text-slate-700 mt-2">
+                    <span class="font-medium">返工要求：</span>{record.reworkRequirements}
+                  </p>
+                {/if}
+                {#if record.handlingRemarks}
+                  <p class="text-sm text-slate-700 mt-2">
+                    <span class="font-medium">处理备注：</span>{record.handlingRemarks}
+                  </p>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
 
     <div class="flex items-center justify-end gap-3">
       <a href="/models" class="btn-secondary">取消</a>

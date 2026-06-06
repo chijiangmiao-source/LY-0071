@@ -8,6 +8,22 @@ export type InspectionResult = 'PASS' | 'FAIL';
 
 export type QualityStatus = 'PENDING' | 'FAILED' | 'PASSED_PENDING_DELIVERY' | 'NONE';
 
+export type ReworkStatus = 'IN_PROGRESS' | 'COMPLETED';
+
+export interface ReworkRecord {
+  id: string;
+  modelId: string;
+  inspectionId: string;
+  reworkStepId: string;
+  reworkStepName: string;
+  reworkResponsiblePerson: string;
+  status: ReworkStatus;
+  startedAt: string;
+  completedAt?: string;
+  completedBy?: string;
+  completionRemarks?: string;
+}
+
 export interface QualityInspection {
   id: string;
   modelId: string;
@@ -71,8 +87,19 @@ export interface StorageData {
   steps: Step[];
   reminderLogs: ReminderLog[];
   qualityInspections: QualityInspection[];
+  reworkRecords: ReworkRecord[];
   updatedAt: string;
 }
+
+export const REWORK_STATUS_LABEL: Record<ReworkStatus, string> = {
+  IN_PROGRESS: '返工中',
+  COMPLETED: '返工完成'
+};
+
+export const REWORK_STATUS_COLOR: Record<ReworkStatus, string> = {
+  IN_PROGRESS: 'bg-amber-100 text-amber-700 border-amber-300',
+  COMPLETED: 'bg-green-100 text-green-700 border-green-300'
+};
 
 export const INSPECTION_RESULT_LABEL: Record<InspectionResult, string> = {
   PASS: '通过',

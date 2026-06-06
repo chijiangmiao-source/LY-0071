@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Model, Step, StorageData, FlowStatus, DentureType, ReminderLog, ReminderDays, DeliveryDateHistory, QualityInspection, QualityStatus, InspectionResult } from './types';
+import type { Model, Step, StorageData, FlowStatus, DentureType, ReminderLog, ReminderDays, DeliveryDateHistory, QualityInspection, QualityStatus, InspectionResult, ReworkRecord, ReworkStatus } from './types';
 import { DEFAULT_REMINDER_DAYS } from './types';
 import { loadFromStorage, saveToStorage } from './storage';
 import { generateId, todayStr, daysRemaining, getDeliveryStatus } from './formatters';
@@ -9,6 +9,7 @@ const emptyData: StorageData = {
   steps: [],
   reminderLogs: [],
   qualityInspections: [],
+  reworkRecords: [],
   updatedAt: ''
 };
 
@@ -19,6 +20,7 @@ export const models = writable<Model[]>(initial.models);
 export const steps = writable<Step[]>(initial.steps);
 export const reminderLogs = writable<ReminderLog[]>(initial.reminderLogs);
 export const qualityInspections = writable<QualityInspection[]>(initial.qualityInspections);
+export const reworkRecords = writable<ReworkRecord[]>(initial.reworkRecords);
 
 function persist() {
   saveToStorage({
@@ -26,6 +28,7 @@ function persist() {
     steps: get(steps),
     reminderLogs: get(reminderLogs),
     qualityInspections: get(qualityInspections),
+    reworkRecords: get(reworkRecords),
     updatedAt: new Date().toISOString()
   });
 }
@@ -35,6 +38,7 @@ if (typeof window !== 'undefined') {
   steps.subscribe(() => persist());
   reminderLogs.subscribe(() => persist());
   qualityInspections.subscribe(() => persist());
+  reworkRecords.subscribe(() => persist());
 }
 
 export function addModel(data: Omit<Model, 'id' | 'createdAt' | 'updatedAt' | 'reminded' | 'deliveryDateHistory'> & { reminded?: boolean; deliveryDateHistory?: DeliveryDateHistory[] }): Model {
@@ -62,6 +66,7 @@ export function deleteModel(id: string): void {
   models.update((list) => list.filter((m) => m.id !== id));
   steps.update((list) => list.filter((s) => s.modelId !== id));
   qualityInspections.update((list) => list.filter((q) => q.modelId !== id));
+  reworkRecords.update((list) => list.filter((r) => r.modelId !== id));
 }
 
 export function getModelById(id: string): Model | undefined {
@@ -287,6 +292,10 @@ export function getQualityStatus(model: Model): QualityStatus {
   const modelSteps = getStepsByModelId(model.id);
   const stepsCompleted = modelSteps.length > 0 && modelSteps.every((s) => s.completed);
   const needsInspection = stepsCompleted || model.status === 'TRIAL';
+  const activeRework = getActiveRework(model.id);
+  if (activeRework) {
+    return 'PENDING';
+  }
   const latest = getLatestQualityInspection(model.id);
   if (!latest) {
     return needsInspection ? 'PENDING' : 'NONE';
@@ -376,4 +385,77 @@ export const qualityPassedPendingDeliveryCount = derived(
     }
     return count;
   }
+);
+
+export function startRework(
+  modelId: string,
+  inspectionId: string,
+  reworkStepId: string,
+  reworkStepName: string,
+  reworkResponsiblePerson: string
+): ReworkRecord {
+  const now = new Date().toISOString();
+  const record: ReworkRecord = {
+    id: generateId(),
+    modelId,
+    inspectionId,
+    reworkStepId,
+    reworkStepName,
+    reworkResponsiblePerson,
+    status: 'IN_PROGRESS',
+    startedAt: now
+  };
+  reworkRecords.update((list) => [...list, record]);
+
+  steps.update((list) =>
+    list.map((s) => {
+      if (s.modelId !== modelId) return s;
+      return {
+        ...s,
+        completed: false,
+        completedAt: undefined
+      };
+    })
+  );
+
+  updateModelStatus(modelId, 'IN_PROGRESS');
+
+  return record;
+}
+
+export function completeRework(
+  reworkId: string,
+  completedBy: string,
+  completionRemarks?: string
+): void {
+  const now = new Date().toISOString();
+  reworkRecords.update((list) =>
+    list.map((r) => {
+      if (r.id !== reworkId) return r;
+      return {
+        ...r,
+        status: 'COMPLETED',
+        completedAt: now,
+        completedBy,
+        completionRemarks: completionRemarks?.trim() || undefined
+      };
+    })
+  );
+}
+
+export function getReworkRecordsByModelId(modelId: string): ReworkRecord[] {
+  return get(reworkRecords)
+    .filter((r) => r.modelId === modelId)
+    .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+}
+
+export function getActiveRework(modelId: string): ReworkRecord | undefined {
+  return get(reworkRecords).find(
+    (r) => r.modelId === modelId && r.status === 'IN_PROGRESS'
+  );
+}
+
+export const activeReworkCount = derived(
+  [reworkRecords],
+  ([$reworkRecords]) => $reworkRecords.filter((r) => r.status === 'IN_PROGRESS').length
 );

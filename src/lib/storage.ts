@@ -25,6 +25,7 @@ export function loadFromStorage(): StorageData | null {
       steps: parsed.steps || [],
       reminderLogs: parsed.reminderLogs || [],
       qualityInspections: parsed.qualityInspections || [],
+      reworkRecords: parsed.reworkRecords || [],
       updatedAt: parsed.updatedAt || new Date().toISOString()
     };
   } catch (e) {

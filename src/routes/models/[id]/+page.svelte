@@ -23,15 +23,20 @@
     qualityInspections,
     addQualityInspection,
     getQualityInspectionsByModelId,
-    getQualityStatus
+    getQualityStatus,
+    reworkRecords,
+    startRework,
+    completeRework,
+    getActiveRework,
+    getReworkRecordsByModelId
   } from '$lib/store';
   import {
     validateModel,
     canTransitionTo,
     canMarkDelivered
   } from '$lib/validators';
-  import type { FlowStatus, DentureType, Model, Step, ReminderDays, DeliveryDateHistory, QualityInspection, QualityStatus, InspectionResult } from '$lib/types';
-  import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES, REMINDER_DAYS_OPTIONS, DEFAULT_REMINDER_DAYS, INSPECTION_RESULT_LABEL } from '$lib/types';
+  import type { FlowStatus, DentureType, Model, Step, ReminderDays, DeliveryDateHistory, QualityInspection, QualityStatus, InspectionResult, ReworkRecord, ReworkStatus } from '$lib/types';
+  import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES, REMINDER_DAYS_OPTIONS, DEFAULT_REMINDER_DAYS, INSPECTION_RESULT_LABEL, REWORK_STATUS_LABEL, REWORK_STATUS_COLOR } from '$lib/types';
   import { todayStr, formatDate, isOverdue, daysRemaining, getDeliveryStatus } from '$lib/formatters';
   import { get } from 'svelte/store';
 
@@ -65,6 +70,16 @@
   let latestInspection: QualityInspection | null = null;
   let qualityStatus: QualityStatus = 'NONE';
   let reworkCount = 0;
+  let localReworkRecords: ReworkRecord[] = [];
+  let activeRework: ReworkRecord | null = null;
+  let showStartReworkModal = false;
+  let showCompleteReworkModal = false;
+  let reworkStepId = '';
+  let reworkResponsiblePerson = '';
+  let reworkErrors: Record<string, string> = {};
+  let completeReworkBy = '';
+  let completeReworkRemarks = '';
+  let completeReworkErrors: Record<string, string> = {};
 
   $: modelId = $page.params.id ?? '';
   $: localSteps = $steps.filter((s) => s.modelId === modelId);
@@ -75,6 +90,10 @@
     latestInspection = localInspections.length > 0 ? localInspections[0] : null;
     qualityStatus = model ? getQualityStatus(model) : 'NONE';
     reworkCount = localInspections.filter((q) => q.result === 'FAIL').length;
+    localReworkRecords = $reworkRecords
+      .filter((r) => r.modelId === modelId)
+      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+    activeRework = localReworkRecords.find((r) => r.status === 'IN_PROGRESS') || null;
   }
 
   const dentureTypeOptions = Object.entries(DENTURE_TYPE_LABEL) as [DentureType, string][];
@@ -151,6 +170,52 @@
   function handleAddQualityInspection(e: CustomEvent) {
     const data = e.detail as Omit<QualityInspection, 'id' | 'createdAt'>;
     addQualityInspection(data);
+  }
+
+  function openStartReworkModal() {
+    reworkStepId = localSteps.length > 0 ? localSteps[0].id : '';
+    reworkResponsiblePerson = responsiblePerson || '';
+    reworkErrors = {};
+    showStartReworkModal = true;
+  }
+
+  function handleStartReworkSubmit() {
+    const errors: Record<string, string> = {};
+    if (!reworkStepId) {
+      errors.reworkStepId = '请选择返工工序';
+    }
+    if (!reworkResponsiblePerson.trim()) {
+      errors.reworkResponsiblePerson = '请填写返工负责人';
+    }
+    if (Object.keys(errors).length > 0) {
+      reworkErrors = errors;
+      return;
+    }
+    const step = localSteps.find((s) => s.id === reworkStepId);
+    if (!step || !latestInspection) return;
+    startRework(modelId, latestInspection.id, step.id, step.name, reworkResponsiblePerson.trim());
+    showStartReworkModal = false;
+  }
+
+  function openCompleteReworkModal() {
+    completeReworkBy = responsiblePerson || '';
+    completeReworkRemarks = '';
+    completeReworkErrors = {};
+    showCompleteReworkModal = true;
+  }
+
+  function handleCompleteReworkSubmit() {
+    const errors: Record<string, string> = {};
+    if (!completeReworkBy.trim()) {
+      errors.completedBy = '请填写完成人';
+    }
+    if (Object.keys(errors).length > 0) {
+      completeReworkErrors = errors;
+      return;
+    }
+    if (!activeRework) return;
+    completeRework(activeRework.id, completeReworkBy.trim(), completeReworkRemarks.trim());
+    showCompleteReworkModal = false;
   }
 
   async function handleSubmit() {
@@ -617,7 +682,48 @@
           {/if}
         </div>
 
-        {#if qualityStatus === 'FAILED' && latestInspection}
+        {#if activeRework}
+          <div class="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+            <div class="flex items-start gap-3">
+              <div class="w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center text-lg flex-shrink-0">
+              🛠️
+            </div>
+            <div class="flex-1">
+              <p class="font-semibold text-amber-800 mb-1">返工进行中</p>
+              <div class="text-sm text-amber-700 space-y-1">
+                <p>
+                  <span class="font-medium">返工工序：</span>{activeRework.reworkStepName}
+                </p>
+                <p>
+                  <span class="font-medium">返工负责人：</span>{activeRework.reworkResponsiblePerson}
+                </p>
+                <p>
+                  <span class="font-medium">开始时间：</span>{formatDate(activeRework.startedAt)}
+                </p>
+              </div>
+              {#if latestInspection?.problemDescription}
+                <p class="text-sm text-slate-700 mt-2">
+                  <span class="font-medium">问题描述：</span>{latestInspection.problemDescription}
+                </p>
+              {/if}
+              {#if latestInspection?.reworkRequirements}
+                <p class="text-sm text-slate-700 mt-1">
+                  <span class="font-medium">返工要求：</span>{latestInspection.reworkRequirements}
+                </p>
+              {/if}
+              <div class="mt-3">
+                <button
+                  type="button"
+                  on:click={openCompleteReworkModal}
+                  class="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors"
+                >
+                  ✅ 完成返工
+                </button>
+              </div>
+            </div>
+          </div>
+          </div>
+        {:else if qualityStatus === 'FAILED' && latestInspection}
           <div class="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl">
             <div class="flex items-start gap-3">
               <div class="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center text-lg flex-shrink-0">
@@ -626,7 +732,7 @@
               <div class="flex-1">
                 <p class="font-semibold text-red-800 mb-1">需返工处理</p>
                 <p class="text-sm text-red-700 mb-2">
-                  最新质检结果为「不通过」，请根据以下问题描述和返工要求完成整改后，重新提交质检。
+                  最新质检结果为「不通过」，请根据以下问题描述和返工要求发起返工流程，完成整改后重新提交质检。
                 </p>
                 {#if latestInspection.problemDescription}
                   <p class="text-sm text-slate-700 mt-2">
@@ -638,6 +744,15 @@
                     <span class="font-medium">返工要求：</span>{latestInspection.reworkRequirements}
                   </p>
                 {/if}
+                <div class="mt-3">
+                  <button
+                    type="button"
+                    on:click={openStartReworkModal}
+                    class="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors"
+                  >
+                    🔄 发起返工
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -650,7 +765,7 @@
               <div class="flex-1">
                 <p class="font-semibold text-orange-800 mb-1">待质检</p>
                 <p class="text-sm text-orange-700">
-                  制作步骤已完成，待试戴阶段或所有步骤完成后，请及时填写质检记录进行验收。
+                  制作步骤已完成或进入待试戴阶段，请及时填写质检记录进行验收。
                 </p>
               </div>
             </div>
@@ -671,11 +786,56 @@
           </div>
         {/if}
 
-        <QualityInspectionForm
-          modelId={modelId}
-          defaultInspector={responsiblePerson}
-          on:submit={handleAddQualityInspection}
-        />
+        {#if !activeRework}
+          <QualityInspectionForm
+            modelId={modelId}
+            defaultInspector={responsiblePerson}
+            on:submit={handleAddQualityInspection}
+          />
+        {/if}
+
+        {#if localReworkRecords.length > 0}
+          <div class="mt-6 pt-5 border-t border-slate-100">
+            <h4 class="text-sm font-semibold text-slate-700 mb-3">🔄 返工历史记录（共 {localReworkRecords.length} 次）</h4>
+            <div class="space-y-3">
+              {#each localReworkRecords as record (record.id)}
+                <div class="border border-slate-200 rounded-xl p-4 {record.status === 'IN_PROGRESS' ? 'bg-amber-50/50 border-amber-200' : 'bg-green-50/50 border-green-200'}">
+                  <div class="flex items-start justify-between gap-3 flex-wrap">
+                    <div class="flex items-center gap-3 flex-wrap">
+                      <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border {REWORK_STATUS_COLOR[record.status]}">
+                        {REWORK_STATUS_LABEL[record.status]}
+                      </span>
+                      <span class="text-sm text-slate-600">
+                        返工工序：<span class="font-medium text-slate-800">{record.reworkStepName}</span>
+                      </span>
+                      <span class="text-sm text-slate-600">
+                        负责人：<span class="font-medium text-slate-800">{record.reworkResponsiblePerson}</span>
+                      </span>
+                    </div>
+                    <span class="text-xs text-slate-400">
+                      开始于 {formatDate(record.startedAt)}
+                    </span>
+                  </div>
+                  {#if record.status === 'COMPLETED'}
+                    <div class="mt-3 pt-3 border-t border-slate-200 space-y-1">
+                      <p class="text-sm text-slate-600">
+                        <span class="font-medium">完成人：</span>{record.completedBy}
+                      </p>
+                      <p class="text-sm text-slate-600">
+                        <span class="font-medium">完成时间：</span>{record.completedAt ? formatDate(record.completedAt) : '-'}
+                      </p>
+                      {#if record.completionRemarks}
+                        <p class="text-sm text-slate-600">
+                          <span class="font-medium">完成备注：</span>{record.completionRemarks}
+                        </p>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
 
         {#if localInspections.length > 0}
           <div class="mt-6 pt-5 border-t border-slate-100">
@@ -835,6 +995,145 @@
               class="btn-primary text-sm"
             >
               确认变更
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if showStartReworkModal}
+      <div
+        class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        on:click={() => (showStartReworkModal = false)}
+      >
+        <div
+          class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+          on:click|stopPropagation
+        >
+          <div class="flex items-start gap-4 mb-4">
+            <div class="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center text-2xl flex-shrink-0">
+              🔄
+            </div>
+            <div class="flex-1">
+              <h3 class="text-lg font-bold text-slate-800 mb-1">发起返工</h3>
+              <p class="text-sm text-slate-500">
+                选择需返工的工序，返工后所有步骤将重置为未完成状态，模型回到「制作中」
+              </p>
+            </div>
+          </div>
+
+          <div class="space-y-4">
+            <div>
+              <label class="label-text">
+                返工工序 <span class="text-warning-red-500">*</span>
+              </label>
+              <select
+                bind:value={reworkStepId}
+                class="input-field {reworkErrors.reworkStepId ? 'border-warning-red-400' : ''}"
+              >
+                {#each localSteps as step}
+                  <option value={step.id}>{step.name}</option>
+                {/each}
+              </select>
+              {#if reworkErrors.reworkStepId}
+                <p class="text-xs text-warning-red-500 mt-1">{reworkErrors.reworkStepId}</p>
+              {/if}
+            </div>
+
+            <div>
+              <label class="label-text">
+                返工负责人 <span class="text-warning-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                bind:value={reworkResponsiblePerson}
+                placeholder="请填写返工负责人"
+                class="input-field {reworkErrors.reworkResponsiblePerson ? 'border-warning-red-400' : ''}"
+              />
+              {#if reworkErrors.reworkResponsiblePerson}
+                <p class="text-xs text-warning-red-500 mt-1">{reworkErrors.reworkResponsiblePerson}</p>
+              {/if}
+            </div>
+          </div>
+
+          <div class="flex gap-3 justify-end mt-5">
+            <button
+              on:click={() => (showStartReworkModal = false)}
+              class="btn-secondary text-sm"
+            >
+              取消
+            </button>
+            <button
+              on:click={handleStartReworkSubmit}
+              class="btn-danger text-sm"
+            >
+              确认发起返工
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if showCompleteReworkModal}
+      <div
+        class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        on:click={() => (showCompleteReworkModal = false)}
+      >
+        <div
+          class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+          on:click|stopPropagation
+        >
+          <div class="flex items-start gap-4 mb-4">
+            <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center text-2xl flex-shrink-0">
+              ✅
+            </div>
+            <div class="flex-1">
+              <h3 class="text-lg font-bold text-slate-800 mb-1">完成返工</h3>
+              <p class="text-sm text-slate-500">
+                确认返工已完成，模型将回到待质检状态
+              </p>
+            </div>
+          </div>
+
+          <div class="space-y-4">
+            <div>
+              <label class="label-text">
+                完成人 <span class="text-warning-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                bind:value={completeReworkBy}
+                placeholder="请填写完成人"
+                class="input-field {completeReworkErrors.completedBy ? 'border-warning-red-400' : ''}"
+              />
+              {#if completeReworkErrors.completedBy}
+                <p class="text-xs text-warning-red-500 mt-1">{completeReworkErrors.completedBy}</p>
+              {/if}
+            </div>
+
+            <div>
+              <label class="label-text">完成备注（可选）</label>
+              <textarea
+                bind:value={completeReworkRemarks}
+                placeholder="填写返工完成情况"
+                rows="3"
+                class="input-field resize-none"
+              ></textarea>
+            </div>
+          </div>
+
+          <div class="flex gap-3 justify-end mt-5">
+            <button
+              on:click={() => (showCompleteReworkModal = false)}
+              class="btn-secondary text-sm"
+            >
+              取消
+            </button>
+            <button
+              on:click={handleCompleteReworkSubmit}
+              class="btn-primary text-sm"
+            >
+              确认完成
             </button>
           </div>
         </div>
