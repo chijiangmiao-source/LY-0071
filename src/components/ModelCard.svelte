@@ -4,8 +4,9 @@
   import StatusBadge from './StatusBadge.svelte';
   import QualityStatusBadge from './QualityStatusBadge.svelte';
   import type { Model, Step, QualityStatus } from '$lib/types';
-  import { DENTURE_TYPE_LABEL, DEFAULT_REMINDER_DAYS } from '$lib/types';
-  import { formatDate, isOverdue, daysRemaining, getDeliveryStatus } from '$lib/formatters';
+  import { DENTURE_TYPE_LABEL } from '$lib/types';
+  import { formatDate, daysRemaining } from '$lib/formatters';
+  import { getDeliveryStatusInfo, shouldShowAlert } from '$lib/domain/deliveryRules';
   import { getQualityStatus } from '$lib/store';
 
   export let model: Model;
@@ -23,15 +24,11 @@
   $: completedSteps = steps.filter((s) => s.completed).length;
   $: totalSteps = steps.length;
   $: progress = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
-  $: deliveryStatus = getDeliveryStatus(
-    model.expectedDeliveryDate,
-    model.status,
-    model.reminderDays ?? DEFAULT_REMINDER_DAYS
-  );
-  $: overdue = deliveryStatus === 'OVERDUE';
-  $: upcoming = deliveryStatus === 'UPCOMING';
-  $: remaining = daysRemaining(model.expectedDeliveryDate);
-  $: showAlert = overdue || upcoming;
+  $: deliveryInfo = getDeliveryStatusInfo(model);
+  $: overdue = deliveryInfo.isOverdue;
+  $: upcoming = deliveryInfo.isUpcoming;
+  $: remaining = deliveryInfo.remainingDays;
+  $: showAlert = shouldShowAlert(model);
   $: {
     qualityStatus = getQualityStatus(model);
     showQualityAlert = qualityStatus === 'PENDING' || qualityStatus === 'FAILED';

@@ -1,5 +1,8 @@
 import type { Model, Step, ValidationResult, FlowStatus, QualityInspection, BatchActionType } from './types';
 import { isDateNotAfterToday, isDateBeforeOrEqual } from './formatters';
+import { canMarkDelivered, canTransitionTo } from './domain/statusRules';
+import { validateBatchAction as domainValidateBatchAction } from './domain/batchRules';
+import type { BatchValidationContext } from './domain/types';
 
 const VALID_NAME_PATTERN = /^[\u4e00-\u9fa5a-zA-Z0-9·\s]+$/;
 
@@ -99,45 +102,6 @@ export function validateStep(
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
-export function canMarkDelivered(
-  steps: Step[],
-  inspections?: QualityInspection[]
-): { valid: boolean; message?: string } {
-  if (!steps || steps.length === 0) {
-    return { valid: false, message: '请先添加制作步骤，所有步骤完成后才能标记为已交付' };
-  }
-  const incomplete = steps.filter((s) => !s.completed);
-  if (incomplete.length > 0) {
-    return {
-      valid: false,
-      message: `还有 ${incomplete.length} 个步骤未完成（${incomplete.map((s) => s.name).join('、')}），请先完成所有步骤`
-    };
-  }
-  const sorted = [...(inspections || [])].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
-  const latest = sorted[0];
-  if (!latest) {
-    return { valid: false, message: '请先完成质检记录，质检通过后才能标记为已交付' };
-  }
-  if (latest.result !== 'PASS') {
-    return { valid: false, message: '最近一次质检未通过，请整改完成并重新质检通过后才能交付' };
-  }
-  return { valid: true };
-}
-
-export function canTransitionTo(
-  current: FlowStatus,
-  target: FlowStatus,
-  steps: Step[],
-  inspections?: QualityInspection[]
-): { valid: boolean; message?: string } {
-  if (target === 'DELIVERED') {
-    return canMarkDelivered(steps, inspections);
-  }
-  return { valid: true };
-}
-
 export function validateQualityInspection(data: Partial<QualityInspection>): ValidationResult {
   const errors: Record<string, string> = {};
   if (!data.inspector || !data.inspector.trim()) {
@@ -164,76 +128,14 @@ export function validateQualityInspection(data: Partial<QualityInspection>): Val
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
-export interface BatchValidationContext {
-  model: Model;
-  steps: Step[];
-  inspections: QualityInspection[];
-}
+export { canMarkDelivered, canTransitionTo };
 
 export function validateBatchAction(
   actionType: BatchActionType,
   payload: Record<string, any>,
   ctx: BatchValidationContext
 ): { valid: boolean; message?: string } {
-  const { model, steps, inspections } = ctx;
-
-  switch (actionType) {
-    case 'SET_RESPONSIBLE_PERSON': {
-      const person = payload.responsiblePerson as string;
-      if (!person || !person.trim()) {
-        return { valid: false, message: '负责人不能为空' };
-      }
-      if (!isValidName(person)) {
-        return { valid: false, message: '负责人只能包含中文、英文、数字和空格' };
-      }
-      return { valid: true };
-    }
-
-    case 'SET_EXPECTED_DELIVERY_DATE': {
-      const newDate = payload.expectedDeliveryDate as string;
-      if (!newDate) {
-        return { valid: false, message: '请选择预计交付日期' };
-      }
-      if (!isDateBeforeOrEqual(model.impressionDate, newDate)) {
-        return { valid: false, message: '预计交付日期不能早于取模日期' };
-      }
-      if (model.status === 'DELIVERED') {
-        return { valid: false, message: '已交付的模型不能修改预计交付日期' };
-      }
-      return { valid: true };
-    }
-
-    case 'SET_REMINDER_DAYS': {
-      const days = payload.reminderDays as number;
-      if (days !== 1 && days !== 3 && days !== 7) {
-        return { valid: false, message: '提醒天数只能是 1、3 或 7 天' };
-      }
-      return { valid: true };
-    }
-
-    case 'MARK_REMINDED': {
-      if (model.status === 'DELIVERED' || model.status === 'CANCELLED') {
-        return { valid: false, message: '已交付或已取消的模型无需标记提醒' };
-      }
-      if (model.reminded) {
-        return { valid: false, message: '该模型已标记为已提醒' };
-      }
-      return { valid: true };
-    }
-
-    case 'SET_FLOW_STATUS': {
-      const target = payload.status as FlowStatus;
-      if (!target) {
-        return { valid: false, message: '请选择目标流转状态' };
-      }
-      return canTransitionTo(model.status, target, steps, inspections);
-    }
-
-    case 'EXPORT_SUMMARY': {
-      return { valid: true };
-    }
-
-    default:
-      return { valid: false, message: '未知的批量操作类型' };
-  }
+  return domainValidateBatchAction(actionType, payload, ctx);
 }
+
+export type { BatchValidationContext };

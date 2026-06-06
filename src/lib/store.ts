@@ -19,8 +19,40 @@ import type {
 } from './types';
 import { DEFAULT_REMINDER_DAYS, FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, QUALITY_STATUS_LABEL, BATCH_ACTION_TYPE_LABEL } from './types';
 import { loadFromStorage, saveToStorage } from './storage';
-import { generateId, todayStr, daysRemaining, getDeliveryStatus, formatDate } from './formatters';
-import { validateBatchAction, canTransitionTo, canMarkDelivered } from './validators';
+import { generateId, todayStr, formatDate, getDeliveryStatus } from './formatters';
+import {
+  canTransitionTo as domainCanTransitionTo,
+  canMarkDelivered as domainCanMarkDelivered
+} from './domain/statusRules';
+import {
+  getQualityStatus as domainGetQualityStatus,
+  getLatestInspection as domainGetLatestInspection,
+  hasPassedLatestInspection,
+  getActiveRework as domainGetActiveRework
+} from './domain/qualityRules';
+import {
+  validateBatchAction as domainValidateBatchAction,
+  getActionFieldName as domainGetActionFieldName,
+  getActionNewValue as domainGetActionNewValue
+} from './domain/batchRules';
+import {
+  countModelsByStatus,
+  countDentureType,
+  getOverdueModels,
+  getUpcomingModels,
+  getUpcomingAndOverdueModels,
+  getDelayReasonStats,
+  getTotalRescheduleCount,
+  countPendingQualityInspection,
+  getQualityInspectionPassRate,
+  countActiveRework,
+  countTotalRework,
+  countQualityFailed,
+  countQualityPassedPendingDelivery,
+  getThisWeekBatchOperationCount,
+  getThisWeekBatchModifiedModelCount,
+  getMostUsedBatchActionType
+} from './domain/statsRules';
 
 const emptyData: StorageData = {
   models: [],
@@ -146,90 +178,19 @@ export function updateModelStatus(modelId: string, status: FlowStatus): void {
   updateModel(modelId, { status });
 }
 
-export const modelsByStatus = derived(models, ($models) => {
-  const result: Record<FlowStatus, number> = {
-    PENDING: 0,
-    IN_PROGRESS: 0,
-    TRIAL: 0,
-    DELIVERED: 0,
-    CANCELLED: 0
-  };
-  for (const m of $models) {
-    result[m.status]++;
-  }
-  return result;
-});
+export const modelsByStatus = derived(models, ($models) => countModelsByStatus($models));
 
-export const dentureTypeStats = derived(models, ($models) => {
-  const result: Partial<Record<DentureType, number>> = {};
-  for (const m of $models) {
-    result[m.dentureType] = (result[m.dentureType] || 0) + 1;
-  }
-  return result;
-});
+export const dentureTypeStats = derived(models, ($models) => countDentureType($models));
 
-export const overdueModels = derived(
-  [models],
-  ([$models]) => {
-    const today = todayStr();
-    return $models.filter(
-      (m) =>
-        (m.status === 'PENDING' || m.status === 'IN_PROGRESS' || m.status === 'TRIAL') &&
-        m.expectedDeliveryDate < today
-    );
-  }
-);
+export const overdueModels = derived([models], ([$models]) => getOverdueModels($models));
 
-export const upcomingModels = derived(
-  [models],
-  ([$models]) => {
-    return $models.filter((m) => {
-      if (m.status === 'DELIVERED' || m.status === 'CANCELLED') return false;
-      const remaining = daysRemaining(m.expectedDeliveryDate);
-      const reminderDays = m.reminderDays ?? DEFAULT_REMINDER_DAYS;
-      return remaining >= 0 && remaining <= reminderDays;
-    });
-  }
-);
+export const upcomingModels = derived([models], ([$models]) => getUpcomingModels($models));
 
-export const upcomingAndOverdueModels = derived(
-  [models],
-  ([$models]) => {
-    return $models.filter((m) => {
-      const status = getDeliveryStatus(
-        m.expectedDeliveryDate,
-        m.status,
-        m.reminderDays ?? DEFAULT_REMINDER_DAYS
-      );
-      return status !== 'NORMAL';
-    });
-  }
-);
+export const upcomingAndOverdueModels = derived([models], ([$models]) => getUpcomingAndOverdueModels($models));
 
-export const delayReasonStats = derived(
-  [models],
-  ([$models]) => {
-    const result: Record<string, number> = {};
-    for (const m of $models) {
-      if (m.delayReason && m.delayReason.trim()) {
-        const reason = m.delayReason.trim();
-        result[reason] = (result[reason] || 0) + 1;
-      }
-    }
-    return result;
-  }
-);
+export const delayReasonStats = derived([models], ([$models]) => getDelayReasonStats($models));
 
-export const totalRescheduleCount = derived(
-  [models],
-  ([$models]) => {
-    let total = 0;
-    for (const m of $models) {
-      total += (m.deliveryDateHistory?.length || 0);
-    }
-    return total;
-  }
-);
+export const totalRescheduleCount = derived([models], ([$models]) => getTotalRescheduleCount($models));
 
 export function markAsReminded(modelId: string): void {
   const now = new Date().toISOString();
@@ -309,108 +270,47 @@ export function getQualityInspectionsByModelId(modelId: string): QualityInspecti
 }
 
 export function getLatestQualityInspection(modelId: string): QualityInspection | undefined {
-  const inspections = getQualityInspectionsByModelId(modelId);
-  return inspections.length > 0 ? inspections[0] : undefined;
+  return domainGetLatestInspection(getQualityInspectionsByModelId(modelId));
 }
 
 export function getQualityStatus(model: Model): QualityStatus {
-  if (model.status === 'CANCELLED' || model.status === 'DELIVERED') return 'NONE';
   const modelSteps = getStepsByModelId(model.id);
-  const stepsCompleted = modelSteps.length > 0 && modelSteps.every((s) => s.completed);
-  const needsInspection = stepsCompleted || model.status === 'TRIAL';
-  const activeRework = getActiveRework(model.id);
-  if (activeRework) {
-    return 'PENDING';
-  }
-  const latest = getLatestQualityInspection(model.id);
-  if (!latest) {
-    return needsInspection ? 'PENDING' : 'NONE';
-  }
-  return latest.result === 'PASS' ? 'PASSED_PENDING_DELIVERY' : 'FAILED';
+  const modelInspections = getQualityInspectionsByModelId(model.id);
+  const modelReworks = getReworkRecordsByModelId(model.id);
+  return domainGetQualityStatus(model, modelSteps, modelInspections, modelReworks);
 }
 
 export function hasPassedQualityInspection(modelId: string): boolean {
-  const latest = getLatestQualityInspection(modelId);
-  return latest?.result === 'PASS';
+  return hasPassedLatestInspection(getQualityInspectionsByModelId(modelId));
 }
 
 export const pendingQualityInspectionCount = derived(
-  [models, steps, qualityInspections],
-  ([$models, $steps, $qualityInspections]) => {
-    let count = 0;
-    for (const m of $models) {
-      if (m.status === 'DELIVERED' || m.status === 'CANCELLED') continue;
-      const modelSteps = $steps.filter((s) => s.modelId === m.id);
-      const stepsCompleted = modelSteps.length > 0 && modelSteps.every((s) => s.completed);
-      if (!stepsCompleted && m.status !== 'TRIAL') continue;
-      const latest = $qualityInspections
-        .filter((q) => q.modelId === m.id)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-      if (!latest) count++;
-    }
-    return count;
-  }
+  [models, steps, qualityInspections, reworkRecords],
+  ([$models, $steps, $qualityInspections, $reworkRecords]) =>
+    countPendingQualityInspection($models, $steps, $qualityInspections, $reworkRecords)
 );
 
 export const qualityInspectionPassRate = derived(
   [models, qualityInspections],
-  ([$models, $qualityInspections]) => {
-    const inspectedModelIds = new Set<string>();
-    let passedCount = 0;
-    for (const m of $models) {
-      const inspections = $qualityInspections
-        .filter((q) => q.modelId === m.id)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      if (inspections.length > 0) {
-        inspectedModelIds.add(m.id);
-        if (inspections[0].result === 'PASS') passedCount++;
-      }
-    }
-    const total = inspectedModelIds.size;
-    if (total === 0) return { rate: 0, total: 0, passed: 0 };
-    return {
-      rate: Math.round((passedCount / total) * 100),
-      total,
-      passed: passedCount
-    };
-  }
+  ([$models, $qualityInspections]) =>
+    getQualityInspectionPassRate($models, $qualityInspections)
 );
 
 export const totalReworkCount = derived(
   [qualityInspections],
-  ([$qualityInspections]) => {
-    return $qualityInspections.filter((q) => q.result === 'FAIL').length;
-  }
+  ([$qualityInspections]) => countTotalRework($qualityInspections)
 );
 
 export const qualityFailedCount = derived(
-  [models, qualityInspections],
-  ([$models, $qualityInspections]) => {
-    let count = 0;
-    for (const m of $models) {
-      if (m.status === 'DELIVERED' || m.status === 'CANCELLED') continue;
-      const inspections = $qualityInspections
-        .filter((q) => q.modelId === m.id)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      if (inspections.length > 0 && inspections[0].result === 'FAIL') count++;
-    }
-    return count;
-  }
+  [models, steps, qualityInspections, reworkRecords],
+  ([$models, $steps, $qualityInspections, $reworkRecords]) =>
+    countQualityFailed($models, $steps, $qualityInspections, $reworkRecords)
 );
 
 export const qualityPassedPendingDeliveryCount = derived(
-  [models, qualityInspections],
-  ([$models, $qualityInspections]) => {
-    let count = 0;
-    for (const m of $models) {
-      if (m.status === 'DELIVERED' || m.status === 'CANCELLED') continue;
-      const inspections = $qualityInspections
-        .filter((q) => q.modelId === m.id)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      if (inspections.length > 0 && inspections[0].result === 'PASS') count++;
-    }
-    return count;
-  }
+  [models, steps, qualityInspections, reworkRecords],
+  ([$models, $steps, $qualityInspections, $reworkRecords]) =>
+    countQualityPassedPendingDelivery($models, $steps, $qualityInspections, $reworkRecords)
 );
 
 export function startRework(
@@ -476,14 +376,12 @@ export function getReworkRecordsByModelId(modelId: string): ReworkRecord[] {
 }
 
 export function getActiveRework(modelId: string): ReworkRecord | undefined {
-  return get(reworkRecords).find(
-    (r) => r.modelId === modelId && r.status === 'IN_PROGRESS'
-  );
+  return domainGetActiveRework(getReworkRecordsByModelId(modelId));
 }
 
 export const activeReworkCount = derived(
   [reworkRecords],
-  ([$reworkRecords]) => $reworkRecords.filter((r) => r.status === 'IN_PROGRESS').length
+  ([$reworkRecords]) => countActiveRework($reworkRecords)
 );
 
 export function getBatchOperationRecordsByModelId(modelId: string): BatchOperationRecord[] {
@@ -534,7 +432,7 @@ export function executeBatchOperation(
     const modelSteps = allSteps.filter((s) => s.modelId === modelId);
     const modelInspections = allInspections.filter((q) => q.modelId === modelId);
 
-    const check = validateBatchAction(actionType, payload, {
+    const check = domainValidateBatchAction(actionType, payload, {
       model,
       steps: modelSteps,
       inspections: modelInspections
@@ -592,7 +490,7 @@ export function executeBatchOperation(
         case 'SET_FLOW_STATUS': {
           previousValues.status = model.status;
           const targetStatus = payload.status as FlowStatus;
-          const transCheck = canTransitionTo(model.status, targetStatus, modelSteps, modelInspections);
+          const transCheck = domainCanTransitionTo(model.status, targetStatus, modelSteps, modelInspections);
           if (!transCheck.valid) {
             failedIds.push(modelId);
             failureReasons[modelId] = transCheck.message || '状态流转不合法';
@@ -613,9 +511,9 @@ export function executeBatchOperation(
         batchOperationId: batchOpId,
         actionType,
         detail: {
-          field: getActionFieldName(actionType),
+          field: domainGetActionFieldName(actionType),
           previousValue: previousValues[Object.keys(previousValues)[0]] ?? null,
-          newValue: getActionNewValue(actionType, payload)
+          newValue: domainGetActionNewValue(actionType, payload)
         },
         createdAt: now
       };
@@ -655,30 +553,6 @@ export function executeBatchOperation(
   };
 }
 
-function getActionFieldName(actionType: BatchActionType): string {
-  switch (actionType) {
-    case 'SET_RESPONSIBLE_PERSON': return '负责人';
-    case 'SET_EXPECTED_DELIVERY_DATE': return '预计交付日期';
-    case 'SET_REMINDER_DAYS': return '提醒天数';
-    case 'MARK_REMINDED': return '提醒状态';
-    case 'SET_FLOW_STATUS': return '流转状态';
-    case 'EXPORT_SUMMARY': return '导出摘要';
-    default: return '';
-  }
-}
-
-function getActionNewValue(actionType: BatchActionType, payload: Record<string, any>): string | number | boolean | null {
-  switch (actionType) {
-    case 'SET_RESPONSIBLE_PERSON': return payload.responsiblePerson ?? null;
-    case 'SET_EXPECTED_DELIVERY_DATE': return payload.expectedDeliveryDate ?? null;
-    case 'SET_REMINDER_DAYS': return payload.reminderDays ?? null;
-    case 'MARK_REMINDED': return true;
-    case 'SET_FLOW_STATUS': return payload.status ?? null;
-    case 'EXPORT_SUMMARY': return null;
-    default: return null;
-  }
-}
-
 export function exportModelsSummary(modelIds: string[]): string {
   const allModels = get(models);
   const allSteps = get(steps);
@@ -699,8 +573,8 @@ export function exportModelsSummary(modelIds: string[]): string {
     const modelSteps = allSteps.filter((s) => s.modelId === modelId);
     const completedSteps = modelSteps.filter((s) => s.completed).length;
     const modelInspections = allInspections.filter((q) => q.modelId === modelId);
-    const latestInspection = modelInspections.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-    const qs = getQualityStatus(model);
+    const modelReworks = getReworkRecordsByModelId(modelId);
+    const qs = domainGetQualityStatus(model, modelSteps, modelInspections, modelReworks);
 
     lines.push(`【模型编号】${model.modelNo}`);
     lines.push(`  患者姓名: ${model.patientName}`);
@@ -711,6 +585,7 @@ export function exportModelsSummary(modelIds: string[]): string {
     lines.push(`  取模日期: ${formatDate(model.impressionDate)}`);
     lines.push(`  预计交付: ${formatDate(model.expectedDeliveryDate)}`);
     lines.push(`  制作进度: ${completedSteps}/${modelSteps.length} 步骤`);
+    const latestInspection = domainGetLatestInspection(modelInspections);
     if (latestInspection) {
       lines.push(`  最近质检: ${latestInspection.result === 'PASS' ? '通过' : '不通过'} (${formatDate(latestInspection.inspectionDate)} · ${latestInspection.inspector})`);
     }
@@ -740,57 +615,15 @@ export function downloadSummary(text: string, filename?: string): void {
 
 export const thisWeekBatchOperationCount = derived(
   [batchOperations],
-  ([$batchOperations]) => {
-    const now = new Date();
-    const dayOfWeek = now.getDay() || 7;
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - (dayOfWeek - 1));
-    monday.setHours(0, 0, 0, 0);
-    return $batchOperations.filter((op) => new Date(op.createdAt) >= monday).length;
-  }
+  ([$batchOperations]) => getThisWeekBatchOperationCount($batchOperations)
 );
 
 export const thisWeekBatchModifiedModelCount = derived(
   [batchOperations],
-  ([$batchOperations]) => {
-    const now = new Date();
-    const dayOfWeek = now.getDay() || 7;
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - (dayOfWeek - 1));
-    monday.setHours(0, 0, 0, 0);
-    const modelSet = new Set<string>();
-    for (const op of $batchOperations) {
-      if (new Date(op.createdAt) >= monday && op.actionType !== 'EXPORT_SUMMARY') {
-        for (const id of op.succeededIds) modelSet.add(id);
-      }
-    }
-    return modelSet.size;
-  }
+  ([$batchOperations]) => getThisWeekBatchModifiedModelCount($batchOperations)
 );
 
 export const mostUsedBatchActionType = derived(
   [batchOperations],
-  ([$batchOperations]): { type: BatchActionType | null; label: string; count: number } => {
-    if ($batchOperations.length === 0) {
-      return { type: null, label: '-', count: 0 };
-    }
-    const counter: Record<string, number> = {};
-    for (const op of $batchOperations) {
-      counter[op.actionType] = (counter[op.actionType] || 0) + 1;
-    }
-    let maxType = '';
-    let maxCount = 0;
-    for (const [t, c] of Object.entries(counter)) {
-      if (c > maxCount) {
-        maxCount = c;
-        maxType = t;
-      }
-    }
-    const type = maxType as BatchActionType;
-    return {
-      type,
-      label: BATCH_ACTION_TYPE_LABEL[type] || '-',
-      count: maxCount
-    };
-  }
+  ([$batchOperations]) => getMostUsedBatchActionType($batchOperations)
 );

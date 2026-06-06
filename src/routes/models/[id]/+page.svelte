@@ -34,13 +34,22 @@
     batchOperationRecords
   } from '$lib/store';
   import {
-    validateModel,
-    canTransitionTo,
-    canMarkDelivered
+    validateModel
   } from '$lib/validators';
+  import { canTransitionTo, canMarkDelivered } from '$lib/domain/statusRules';
+  import {
+    canStartRework,
+    canCompleteRework,
+    getReworkCount
+  } from '$lib/domain/qualityRules';
+  import {
+    canMarkReminded,
+    canReschedule,
+    getDeliveryStatusInfo
+  } from '$lib/domain/deliveryRules';
   import type { FlowStatus, DentureType, Model, Step, ReminderDays, DeliveryDateHistory, QualityInspection, QualityStatus, InspectionResult, ReworkRecord, ReworkStatus, BatchOperationRecord, BatchOperation } from '$lib/types';
   import { FLOW_STATUS_LABEL, DENTURE_TYPE_LABEL, DEFAULT_STEP_NAMES, REMINDER_DAYS_OPTIONS, DEFAULT_REMINDER_DAYS, INSPECTION_RESULT_LABEL, REWORK_STATUS_LABEL, REWORK_STATUS_COLOR, BATCH_ACTION_TYPE_LABEL, BATCH_ACTION_TYPE_ICON } from '$lib/types';
-  import { todayStr, formatDate, isOverdue, daysRemaining, getDeliveryStatus } from '$lib/formatters';
+  import { todayStr, formatDate, daysRemaining } from '$lib/formatters';
   import { get } from 'svelte/store';
 
   let modelId = '';
@@ -92,7 +101,7 @@
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     latestInspection = localInspections.length > 0 ? localInspections[0] : null;
     qualityStatus = model ? getQualityStatus(model) : 'NONE';
-    reworkCount = localInspections.filter((q) => q.result === 'FAIL').length;
+    reworkCount = getReworkCount(localInspections);
     localReworkRecords = $reworkRecords
       .filter((r) => r.modelId === modelId)
       .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
@@ -311,11 +320,13 @@
   }
 
   $: completedCount = localSteps.filter((s) => s.completed).length;
-  $: overdue = loaded && isOverdue(expectedDeliveryDate, status);
-  $: remaining = daysRemaining(expectedDeliveryDate);
-  $: deliveryStatus = loaded ? getDeliveryStatus(expectedDeliveryDate, status, reminderDays) : 'NORMAL';
-  $: isUpcoming = deliveryStatus === 'UPCOMING';
-  $: isOverdueStatus = deliveryStatus === 'OVERDUE';
+  $: deliveryInfo = loaded && model ? getDeliveryStatusInfo(model) : { status: 'NORMAL' as const, remainingDays: 0, isOverdue: false, isUpcoming: false };
+  $: overdue = deliveryInfo.isOverdue;
+  $: remaining = deliveryInfo.remainingDays;
+  $: isUpcoming = deliveryInfo.isUpcoming;
+  $: isOverdueStatus = deliveryInfo.isOverdue;
+  $: canMarkRemindedBtn = model ? canMarkReminded(model).valid : false;
+  $: canRescheduleBtn = model ? canReschedule(model).valid : false;
 
   function formatBatchValue(v: any): string {
     if (v === true) return '是';
@@ -533,7 +544,7 @@
               <button
                 type="button"
                 on:click={handleMarkReminded}
-                disabled={reminded || status === 'DELIVERED' || status === 'CANCELLED'}
+                disabled={!canMarkRemindedBtn}
                 class="px-4 py-2 bg-medical-blue-500 text-white rounded-lg text-sm font-medium hover:bg-medical-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {reminded ? '✓ 已标记提醒' : '标记为已提醒'}
@@ -553,7 +564,7 @@
             <button
               type="button"
               on:click={openRescheduleModal}
-              disabled={status === 'DELIVERED' || status === 'CANCELLED'}
+              disabled={!canRescheduleBtn}
               class="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               📅 重新约定交付日期

@@ -7,8 +7,9 @@
   import StatusBadge from '$components/StatusBadge.svelte';
   import { models, modelsByStatus, overdueModels, upcomingModels, delayReasonStats, totalRescheduleCount, upcomingAndOverdueModels, pendingQualityInspectionCount, qualityInspectionPassRate, totalReworkCount, activeReworkCount, thisWeekBatchOperationCount, thisWeekBatchModifiedModelCount, mostUsedBatchActionType } from '$lib/store';
   import type { Model } from '$lib/types';
-  import { DENTURE_TYPE_LABEL, DEFAULT_REMINDER_DAYS } from '$lib/types';
-  import { formatDate, daysRemaining, getLastNDates, getDeliveryStatus } from '$lib/formatters';
+  import { DENTURE_TYPE_LABEL } from '$lib/types';
+  import { formatDate, daysRemaining, getLastNDates } from '$lib/formatters';
+  import { getDeliveryStatusInfo } from '$lib/domain/deliveryRules';
   import { goto } from '$app/navigation';
 
   let chart1: any;
@@ -173,15 +174,11 @@
   })();
 
   function getAlertItemStatus(model: Model) {
-    const deliveryStatus = getDeliveryStatus(
-      model.expectedDeliveryDate,
-      model.status,
-      model.reminderDays ?? DEFAULT_REMINDER_DAYS
-    );
+    const info = getDeliveryStatusInfo(model);
     return {
-      deliveryStatus,
-      remaining: daysRemaining(model.expectedDeliveryDate),
-      isOverdue: deliveryStatus === 'OVERDUE'
+      deliveryStatus: info.status,
+      remaining: info.remainingDays,
+      isOverdue: info.isOverdue
     };
   }
 </script>
