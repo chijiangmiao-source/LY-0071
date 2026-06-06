@@ -61,7 +61,17 @@
       fill: { opacity: 0.15 },
       dataLabels: { enabled: false },
       xaxis: { categories: [] },
-      yaxis: { decimalsInFloat: 0 },
+      yaxis: {
+        min: 0,
+        decimalsInFloat: 0,
+        tickAmount: undefined,
+        labels: {
+          formatter: function(val: number) {
+            return Math.round(val).toString();
+          }
+        },
+        forceNiceScale: true
+      },
       legend: { position: 'top' },
       grid: { borderColor: '#e2e8f0' }
     };

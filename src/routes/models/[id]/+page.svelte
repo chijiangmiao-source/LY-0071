@@ -124,7 +124,7 @@
       responsiblePerson: responsiblePerson.trim(),
       status
     };
-    const result = validateModel(data, get(models), modelId);
+    const result = validateModel(data, get(models), localSteps, modelId);
     if (!result.valid) {
       errors = result.errors;
       return;
