@@ -39,9 +39,23 @@ let deliverWarningMessage = '';
   function addDefaultSteps() {
     const today = new Date();
     const baseDate = impressionDate ? new Date(impressionDate) : today;
+    const deliveryDate = expectedDeliveryDate ? new Date(expectedDeliveryDate) : null;
+    const stepCount = DEFAULT_STEP_NAMES.length;
     localSteps = DEFAULT_STEP_NAMES.map((name, idx) => {
-      const planned = new Date(baseDate);
-      planned.setDate(planned.getDate() + (idx + 1) * 2);
+      let planned: Date;
+      if (deliveryDate) {
+        const interval = Math.max(1, Math.floor((deliveryDate.getTime() - baseDate.getTime()) / (stepCount * 86400000)));
+        planned = new Date(baseDate);
+        planned.setDate(planned.getDate() + (idx + 1) * Math.max(1, interval));
+        if (planned > deliveryDate) {
+          planned = new Date(deliveryDate);
+          planned.setDate(planned.getDate() - (stepCount - 1 - idx));
+          if (planned < baseDate) planned = new Date(baseDate);
+        }
+      } else {
+        planned = new Date(baseDate);
+        planned.setDate(planned.getDate() + (idx + 1) * 2);
+      }
       return {
         id: 'temp_' + Math.random().toString(36).slice(2, 10),
         modelId: '',
@@ -318,6 +332,7 @@ let deliverWarningMessage = '';
 
     <StepForm
       editing={editingStep}
+      expectedDeliveryDate={expectedDeliveryDate}
       on:add={handleAddStep}
       on:update={handleUpdateStep}
     >
@@ -341,18 +356,14 @@ let deliverWarningMessage = '';
                 : 'bg-white hover:bg-slate-50'} transition-colors"
             >
               <div class="flex items-start gap-3">
-                <button
-                  type="button"
-                  on:click={() => handleToggleComplete(step.id)}
-                  class="mt-0.5 w-5 h-5 rounded border-2 flex-shrink-0 flex items-center justify-center transition-all {step.completed
-                    ? 'bg-green-500 border-green-500 text-white'
-                    : 'border-slate-300 hover:border-medical-blue-500'}"
-                  aria-label={step.completed ? '标记未完成' : '标记完成'}
-                >
-                  {#if step.completed}
-                    <span class="text-xs">✓</span>
-                  {/if}
-                </button>
+                <label class="mt-1 flex-shrink-0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={step.completed}
+                    on:change={() => handleToggleComplete(step.id)}
+                    class="w-5 h-5 rounded border-2 border-slate-300 text-green-500 focus:ring-green-500 focus:ring-offset-0 cursor-pointer"
+                  />
+                </label>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
                     <span

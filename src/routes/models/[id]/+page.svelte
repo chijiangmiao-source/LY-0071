@@ -57,7 +57,7 @@
   let rescheduleErrors: Record<string, string> = {};
 
   $: modelId = $page.params.id ?? '';
-  $: localSteps = get(steps).filter((s) => s.modelId === modelId);
+  $: localSteps = $steps.filter((s) => s.modelId === modelId);
 
   const dentureTypeOptions = Object.entries(DENTURE_TYPE_LABEL) as [DentureType, string][];
 
@@ -487,6 +487,7 @@
       <StepForm
         editing={editingStep}
         modelId={modelId}
+        expectedDeliveryDate={expectedDeliveryDate}
         on:add={handleAddStep}
         on:update={handleUpdateStep}
       >
@@ -503,17 +504,14 @@
                   : 'bg-white hover:bg-slate-50'} transition-colors"
               >
                 <div class="flex items-start gap-3">
-                  <button
-                    type="button"
-                    on:click={() => handleToggleComplete(step.id)}
-                    class="mt-0.5 w-5 h-5 rounded border-2 flex-shrink-0 flex items-center justify-center transition-all {step.completed
-                      ? 'bg-green-500 border-green-500 text-white'
-                      : 'border-slate-300 hover:border-medical-blue-500'}"
-                  >
-                    {#if step.completed}
-                      <span class="text-xs">✓</span>
-                    {/if}
-                  </button>
+                  <label class="mt-1 flex-shrink-0 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={step.completed}
+                      on:change={() => handleToggleComplete(step.id)}
+                      class="w-5 h-5 rounded border-2 border-slate-300 text-green-500 focus:ring-green-500 focus:ring-offset-0 cursor-pointer"
+                    />
+                  </label>
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2 flex-wrap">
                       <span

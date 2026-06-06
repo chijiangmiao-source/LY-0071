@@ -72,7 +72,10 @@ export function validateModel(
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
-export function validateStep(step: Partial<Step>): ValidationResult {
+export function validateStep(
+  step: Partial<Step>,
+  expectedDeliveryDate?: string
+): ValidationResult {
   const errors: Record<string, string> = {};
 
   if (!step.name || !step.name.trim()) {
@@ -81,6 +84,8 @@ export function validateStep(step: Partial<Step>): ValidationResult {
 
   if (!step.plannedDate) {
     errors.plannedDate = '请选择计划完成日期';
+  } else if (expectedDeliveryDate && !isDateBeforeOrEqual(step.plannedDate, expectedDeliveryDate)) {
+    errors.plannedDate = '计划完成日期不能晚于模型预计交付日期';
   }
 
   if (!step.responsiblePerson || !step.responsiblePerson.trim()) {
